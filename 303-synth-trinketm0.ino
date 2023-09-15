@@ -165,6 +165,7 @@ int potRES = 1; //DEF_potRES;
 int accent = 0;
 int env_mod = 127;
 int decay = 0;
+int tbd = 0;
 
 
 // envelope generator
@@ -378,7 +379,19 @@ void HandleNoteOff(byte channel, byte note, byte velocity) {
 }
 
 
+byte notes[] = { 48, 50, 51, 53, 55, 56, 58, 60 };
+
 void updateControl(){
+  int tbd_val = adc_read(TBD_PIN);
+  tbd_val = map(tbd_val, 0, 255, 0, 8);  
+  tbd_val = constrain(tbd_val, 0, 7); 
+  if (tbd_val != tbd) {
+    // TODO trigger handleNoteOn
+    Serial.print("Tbd "); Serial.print(tbd); Serial.print(" -> "); Serial.println(tbd_val);    
+    HandleNoteOff(MIDI_CHANNEL, notes[tbd], LVL_NORM);
+    tbd = tbd_val;
+    HandleNoteOn(MIDI_CHANNEL, notes[tbd_val], LVL_NORM);
+  }
   // freq = fn(note, tuning offset, glide)
   // wave = ratio of knob to number of options
   // ctrl_wave();  // sets wave
