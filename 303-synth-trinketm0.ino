@@ -32,15 +32,9 @@
       *   A7 TBD
    
     TODO
-    * adc_expontential and apply to cut
-    * send i2c req for value after read to prep for next read
-    * swap out filter for something better
-    * add max/min for filter and res
-    * if res is still reverse (1 max) then switch to adc_lin_inv
     * add Serial.read to send notes over TTY and not need keyboard for testing
-    * exp_mappings, and use for cut
     * SAMD21 ADC bug
-    * zombie osc_playing
+    * zombie osc_playing, is this an issue?
 
     Version road map:
       * Y verify turns on, use dotstar
@@ -152,7 +146,7 @@ int tbd = 0;
 // <x, y> where x is how often update() will be called and y is how often next()
 // so for this, put update into controlHool and next in audioHook
 ADSR <CONTROL_RATE, AUDIO_RATE> venv[NUM_OSCILS];
-// ADSR <CONTROL_RATE, CONTROL_RATE> fenv[NUM_OSCILS];
+ADSR <CONTROL_RATE, CONTROL_RATE> fenv[NUM_OSCILS];
 // for now normal is 62.5%, accent base is 80%
 #define LVL_MIN 0
 // #define LVL_NORM 160
@@ -203,8 +197,8 @@ void mozzi_setup () {
   venv[0].setADLevels(accent_level, 0);  // att, dcy; 0-255. 
   //venv[0].setTimes(50,200,10000,200); // testing long note
   venv[0].setTimes(3, 10000, 0, 0); // 303 VENV is constant, accent changes levels
-  // fenv[0].setADLevels(LVL_NORM, 0);
-  // fenv[0].setTimes(3, 2500, 0, 0); // 303 FENV delay changes with knob, levels change as function of env mod or accent, res
+  fenv[0].setADLevels(255, 0);  // 303 FENV level changed by env mod, or if accent, then fn of accent, res, and env mod
+  fenv[0].setTimes(3, 2500, 0, 0); // 303 FENV delay changes with knob, levels change as function of env mod or accent, res
   startMozzi(CONTROL_RATE); // :)
 }
 
@@ -264,7 +258,7 @@ bool trigger_env (int osc_idx) {
   if (DEBUG) { Serial.println("Triggering ENV ADSR"); }  
   oscils_playing[osc_idx] = true;
   venv[osc_idx].noteOn();
-  // fenv[osc_idx].noteOn();
+  fenv[osc_idx].noteOn();
   return true;
 }
 
@@ -275,7 +269,7 @@ void stop_env (int osc_idx) {
   // if (venv[0].playing()) {
   oscils_playing[osc_idx] = false;
   venv[osc_idx].noteOff();
-  // fenv[osc_idx].noteOff();
+  fenv[osc_idx].noteOff();
 }
 
 
@@ -320,6 +314,7 @@ void updateControl () {
    *    next extrapolates between actual and next
    *  aka this is where you read knobs and set/update any numbers extrapolated/used within audioHook
    */
+  bool update_lpf = false;
   control_cnt++;
   int tbd_val = 0;
   int waveform = 0;
@@ -359,7 +354,7 @@ void updateControl () {
       if (DEBUG) { Serial.print("Dcy "); Serial.print(decay); Serial.print(" -> "); Serial.println(dcy_ms); }
       decay = dcy_ms;    
       // see if you don't need to set setADLevel based on accent if you don't need to, use the boost ratio in control
-      // fenv[0].setTimes(3, decay, 0, 0);
+      fenv[0].setTimes(3, decay, 0, 0);
     }
   }
   // acc = accent_on ? ratio of knob : 0
@@ -383,6 +378,7 @@ void updateControl () {
   if (res != resonance) {
     if (DEBUG) { Serial.print("Res "); Serial.print(resonance); Serial.print(" -> "); Serial.println(res); }
     resonance = res;
+    update_lpf = true;
   }
   // env_mod = ratio of knob
   //   env_mod has an effect on fenv and cut
@@ -395,8 +391,10 @@ void updateControl () {
   if (env != env_mod) {
     if (DEBUG) { Serial.print("Env "); Serial.print(env_mod); Serial.print(" -> "); Serial.println(env); }
     env_mod = env;
+    // does env_mod change? fenv[0].setADLevels(0, 0);
+    update_lpf = true;
   }
-  // fenv[0].update();  // TODO try removing this to see if speed up happens
+  fenv[0].update();
   // if !accent_on: cut = cut + fn(fenv(dcy=knob)*env_mod%)
   // if  accent_on: cut = cut + smooth_via_c13(res, fenv*acc%)
   //                res 0% is fenv/acc. res 100% smooth(fenv*acc%)
@@ -406,19 +404,24 @@ void updateControl () {
   // int cut_freq = map(cut_value, 0, 255, CUT_MIN, CUT_MAX);
   // mozziAnalogRead value is 0-1023 AVR, 0-4095 on STM32; set with analogReadResolution in setup
   // note that this has been reduced to 8b until testing complete, so cut_value=0..255
-  // int cut_value = mozziAnalogRead(CUT_PIN);
-  // int cut_freq = cut_pot_to_val[cut_value];
-  // pot wired to return higher ADC when turned clockwise
-  // if (DEBUG) { Serial.print("Cut v "); Serial.println(cut_value); }
-  // if (DEBUG) { Serial.print("Cut f "); Serial.println(cut_freq); }
   if (cut_value != cutoff) {
     if (DEBUG) { Serial.print("Cut "); Serial.print(cutoff); Serial.print(" -> "); Serial.println(cut_value); }
     cutoff = cut_value;
+    update_lpf = true;
   }
+  // now we adjust the cut
+  // for now, just give it the spike to know it works
+  int fenv_level = (fenv[0].next() * env_mod) >> 8;  // use env_mod as a % on fenv
+  fenv_level = lin_to_exp[fenv_level];  // scale to be exponential decay
+  // find the headroom above the current cut, then use fenv as a % against that
+  fenv_level = ((CUT_MAX - cutoff) * fenv_level) >> 8;
+  int tmp_cutoff = constrain(cutoff + fenv_level, 0, 255);
+  // fenv_level = (fenv_level * ) >> 8;
+  // fenv_level = constrain(fenv_level + cutoff, 0, 256)
   // int fenv_boost = 0;
+  // if fenv_boost has changed since last time update_lpf=true;
   // use shifts instead of float/perc multipliers
 //  if (false /*TODO*/ && env_mod && !accent_on) {
-//    int fenv_level = fenv[0].next();
 //    // float fenv_boost_perc = acc_pot_to_gain_val[env_mod];  // >= 1.0
 //    float fenv_attenuate_perc = (float) fenv_level * ((float) env_mod / 255.0);  // 0..255
 //    fenv_attenuate_perc = fenv_attenuate_perc / 255.0;  // 0..1
@@ -431,10 +434,8 @@ void updateControl () {
 //    // TODO
 //    // fenv_boost = calc_cut_acc(cut, fenv[0], acc, res);
 //  }
-  // svf.setResonance(resonance);  // resonance is the global, res is local
-  // svf.setCentreFreq(cutoff + fenv_boost);  // cutoff is the global, cut_freq is local
-  lpf.setCutoffFreqAndResonance(cutoff, resonance);
-  // seems like need to svf.update() here! but SVF doesn't have that member?!
+  // if update_lpf {
+  lpf.setCutoffFreqAndResonance(tmp_cutoff, resonance);
   // float venv_accent_boost = acc_pot_to_gain_val[acc];  // ret 1..(LVL_MAX/LVL_NORM)
   // venv(atk=3 msec, dcy=5000) * acc%*(LVL_MAX/LVL_NORM)
   // in audio: venv.next()*venv_accent_boost
