@@ -38,6 +38,9 @@
     * add max/min for filter and res
     * if res is still reverse (1 max) then switch to adc_lin_inv
     * add Serial.read to send notes over TTY and not need keyboard for testing
+    * exp_mappings, and use for cut
+    * SAMD21 ADC bug
+    * zombie osc_playing
 
     Version road map:
       * Y verify turns on, use dotstar
@@ -92,21 +95,15 @@ You can perform this tuning by either applying 3.0VDC to the VCO or finishing th
 #define CUT_PIN 8
 
 /* midi defines */
+// #define MIDI_CHANNEL MIDI_CHANNEL_OMNI  // means all channels
 #define MIDI_CHANNEL 1
 
 
 // use #define for CONTROL_RATE, not a constant
-#define CONTROL_RATE 64 // Hz, powers of 2 are most reliable
+#define CONTROL_RATE 64  // Hz, powers of 2 are most reliable
+#define CONTROL_SUBRATE 4  // how often 
+int control_cnt = 0;
 
-// for why DEF_pot* see lines 300ish in https://github.com/diyelectromusic/sdemp/blob/main/src/SDEMP/TrinketUSBMIDIMultiPotMozziSynth3/TrinketUSBMIDIMultiPotMozziSynth3.ino
-// on-board ADC (pins 0..4) 10b 0..4095
-//#define CUT_PIN 4
-//#define DEF_potCUT POT_12b_MAX
-// ADS7830 ADC (pins 0..7) 8b 0..255
-//#define RES_PIN 0
-//#define DEF_potRES POT_8b_MAX  // higher value means lower resonance for SVFilter
-//#define OSC0WAVT_PIN 1
-#define DEF_potOSC0WAVT 0
 
 #define NUM_OSCILS 1
 Oscil<COS2048_NUM_CELLS, AUDIO_RATE> oscils[NUM_OSCILS];
@@ -114,10 +111,9 @@ int oscils_note[NUM_OSCILS];
 int oscils_freq[NUM_OSCILS];
 bool oscils_playing[NUM_OSCILS];
 int oscils_wavt[NUM_OSCILS];
-//int oscils_wavt_cnt[NUM_OSCILS];
 int osc0_wavt_cnt = 4;  // count of the switch statement options
-int potosc0wavt = DEF_potOSC0WAVT;
-//int osc0_wavt_pot_to_val[POT_8b_MAX + 1];
+
+
 // use: Oscil <table_size, update_rate> oscilName (wavetable), look in .h file of table #included above
 // Oscil <COS2048_NUM_CELLS, CONTROL_RATE> kFilterMod(COS2048_DATA);
 //Oscil <, AUDIO_RATE> WAVEFORM0 = [
@@ -125,19 +121,17 @@ int potosc0wavt = DEF_potOSC0WAVT;
 //  Oscil <WHITENOISE8192_NUM_CELLS, AUDIO_RATE> aNoise(WHITENOISE8192_DATA)  // noise always at end
 //];
 
+// LowPassFilter lpf;  // can be changed to HighPassFilter, BandPassFilter or NotchFilter
+
 StateVariable <LOWPASS> svf; // can be LOWPASS, BANDPASS, HIGHPASS or NOTCH
 // svf freq range is 20 Hz to AUDIO_RATE/4 (32k/4 = 8192)
 #define CUT_MIN 20
 const int CUT_MAX = AUDIO_RATE >> 2;  // AUDIO_RATE/4;
+// const int cut_max = 20000;  // max moog filter is 20k, prev 16k, what is 303?
 int cutoff = CUT_MAX;
-int potCUT = 255; //DEF_potCUT;
-// const float cut_max = 20000.0;  // max moog filter is 20k, prev 16k, what is 303?
-//int cut_pot_to_val[POT_12b_MAX + 1];
 #define RES_MIN 1  // min value, but maximum resonance
 const int RES_MAX = 255;  // 180; // observed, but technically 255, max value, but minimum res
 int resonance = 1; //RES_MAX;
-int potRES = 1; //DEF_potRES;
-//int res_pot_to_val[POT_8b_MAX + 1];
 
 
 // with accent off, these are the time for exponential decay to 10%
@@ -145,8 +139,6 @@ int potRES = 1; //DEF_potRES;
 #define DCY_MIN 200
 // with accent off
 #define DCY_MAX 2500
-//int decay_pot_to_val[POT_8b_MAX + 1];
-//float acc_pot_to_gain_val[POT_8b_MAX + 1];
 int accent = 0;
 int env_mod = 127;
 int decay = 0;
@@ -168,9 +160,8 @@ ADSR <CONTROL_RATE, CONTROL_RATE> fenv[NUM_OSCILS];
 bool accent_on = false;
 int accent_level = LVL_NORM;
 
-#define DEBUG 1
 
-
+#define DEBUG 0
 void debug_setup () {
   /* if debug off, we don't need serial */
   if (!DEBUG) {
@@ -198,20 +189,16 @@ void loop(){
 
 
 void mozzi_setup () {
-  oscils_freq[0] = 440;
   oscils_note[0] = 81;  // A4
+  oscils_freq[0] = 440;  // could also use (int)mtof
   oscils_playing[0] = false;
   oscils_wavt[0] = 0;
-  //oscils_wavt_cnt[0] = 2;
-  // oscils[0].setTable(SIN2048_DATA);
   set_wavetables();
-  oscils[0].setFreq(oscils_freq[0]); // set the frequency
-  // set_wf0(WAVEFORM0_FRQ, WAVEFORM0_IDX);
-  // kFilterMod.setFreq(1.3f);
-  svf.setResonance(resonance);  // 25
-  svf.setCentreFreq(cutoff);  // 1200
+  oscils[0].setFreq(oscils_freq[0]);
+  svf.setResonance(resonance);
+  svf.setCentreFreq(cutoff);
   venv[0].setADLevels(accent_level, 0);  // att, dcy; 0-255. 
-  //venv[0].setTimes(50,200,10000,200); // 10000 is so the note will sustain 10 seconds unless a noteOff comes
+  //venv[0].setTimes(50,200,10000,200); // testing long note
   venv[0].setTimes(3, 10000, 0, 0); // 303 VENV is constant, accent changes levels
   fenv[0].setADLevels(LVL_NORM, 0);
   fenv[0].setTimes(3, 2500, 0, 0); // 303 FENV delay changes with knob, levels change as function of env mod or accent, res
@@ -230,7 +217,7 @@ void set_wavetables () {
 void set_wavetable (int oscil_idx) {
   /* look at global storage of what wavetable this osc should use, map it to the actual lib table, and set it */
   int wavt = oscils_wavt[oscil_idx];
-  // TODO oscil specific order of tables (ex: LFO vs OSC)
+  // consider oscil specific order of tables (ex: LFO vs OSC)
   switch (wavt) {
     case 1:
       oscils[oscil_idx].setTable(SQUARE_NO_ALIAS_2048_DATA);
@@ -249,11 +236,16 @@ void set_wavetable (int oscil_idx) {
 
 void note_change (int osc_idx, int note) {
   /* the note changed, update globals, convert to freq, and set the osc */
+  if (note == oscils_note[osc_idx]) {
+    return;
+  }
   int freq = (int)mtof(note);
   if (DEBUG) { Serial.print("Freq "); Serial.print(oscils_freq[osc_idx]); Serial.print(" -> "); Serial.println(freq); }
   oscils_freq[osc_idx] = freq;
   oscils_note[osc_idx] = note;
   oscils[osc_idx].setFreq(oscils_freq[osc_idx]);  // +- bend
+  // this would be where the subosc offset could be calc'ed and set
+  // note_change(1, note - suboscoffset, false);
 }
 
 
@@ -284,42 +276,60 @@ void stop_env (int osc_idx) {
 }
 
 
-// TODO reduce how many knobs are checked how often. reduce compute in this function
 void updateControl () {
   /* Mozzi calls this every CONTROL_RATE, keep as fast as possible as it will hold up AUDIO_RATE calls
    *  for wave forms (like oscil, env shapes), call .update() per CONTROL_RATE and .next() per AUDIO_RATE in audioHook()
    *    update calcs the actual value of that wave
    *    next extrapolates between actual and next
+   *  aka this is where you read knobs and set/update any numbers extrapolated/used within audioHook
    */
-  // this is where you read knobs and set/update any numbers extrapolated/used within audioHook
-  int tbd_val = adc_read(TBD_PIN);
-  tbd_val = map(tbd_val, 0, 255, 0, 8);  
-  tbd_val = constrain(tbd_val, 0, 7); 
-  if (tbd_val != tbd) {
-    // for testing, this is c harmonic minor
-    byte notes[] = { 48, 50, 51, 53, 55, 56, 58, 60 };
-    if (DEBUG) { Serial.print("Tbd "); Serial.print(tbd); Serial.print(" -> "); Serial.println(tbd_val); } 
-    HandleNoteOff(MIDI_CHANNEL, notes[tbd], LVL_NORM);
-    tbd = tbd_val;
-    HandleNoteOn(MIDI_CHANNEL, notes[tbd_val], LVL_NORM);
-  }
-  // freq = fn(note, tuning offset, glide)
-  // wave = ratio of knob to number of options
-  // ctrl_wave();  // sets wave
-  int waveform = adc_read(OSC0WAVT_PIN);
-  waveform = map(waveform, 0, 255, 0, osc0_wavt_cnt);  
-  waveform = constrain(waveform, 0, osc0_wavt_cnt - 1); // else 255 is osc0_wavt_cnt which would be an index error
-  if (waveform != oscils_wavt[0]) {
-    if (DEBUG) { Serial.print("Osc0-wave "); Serial.print(oscils_wavt[0]); Serial.print(" -> "); Serial.println(waveform); }
-    oscils_wavt[0] = waveform;
-    set_wavetable(0);
+  control_cnt++;
+  int tbd_val = 0;
+  int waveform = 0;
+  int dcy_val = 0;
+  int dcy_ms = 200;
+  if (control_cnt > CONTROL_SUBRATE) {
+    // these are controls that don't need to be responsive, reduce the I2C waits
+    control_cnt = 0;
+    tbd_val = adc_read(TBD_PIN);
+    tbd_val = map(tbd_val, 0, 255, 0, 8);  
+    tbd_val = constrain(tbd_val, 0, 7); 
+    if (tbd_val != tbd) {
+      // for testing, this is c harmonic minor
+      byte notes[] = { 48, 50, 51, 53, 55, 56, 58, 60 };
+      if (DEBUG) { Serial.print("Tbd "); Serial.print(tbd); Serial.print(" -> "); Serial.println(tbd_val); } 
+      HandleNoteOff(MIDI_CHANNEL, notes[tbd], LVL_NORM);
+      tbd = tbd_val;
+      HandleNoteOn(MIDI_CHANNEL, notes[tbd_val], LVL_NORM);
+    }
+    // freq = fn(note, tuning offset, glide)
+    // wave = ratio of knob to number of options
+    waveform = adc_read(OSC0WAVT_PIN);
+    waveform = map(waveform, 0, 255, 0, osc0_wavt_cnt);  
+    waveform = constrain(waveform, 0, osc0_wavt_cnt - 1); // else 255 is osc0_wavt_cnt which would be an index error
+    if (waveform != oscils_wavt[0]) {
+      if (DEBUG) { Serial.print("Osc0-wave "); Serial.print(oscils_wavt[0]); Serial.print(" -> "); Serial.println(waveform); }
+      oscils_wavt[0] = waveform;
+      set_wavetable(0);
+    }
+    // if !accent_on: fenv(atk=3 msec, dcy=200 msec +(2500-200)*ratio of knob)
+    // if  accent_on: fenv(atk=3 msec, dcy=200 msec)
+    dcy_val = adc_read(DCY_PIN);
+    if (!accent_on) {
+      dcy_ms = map(dcy_val, 0, 255, DCY_MIN, DCY_MAX);
+    }
+    if (dcy_ms != decay) {
+      if (DEBUG) { Serial.print("Dcy "); Serial.print(decay); Serial.print(" -> "); Serial.println(dcy_ms); }
+      decay = dcy_ms;    
+      // see if you don't need to set setADLevel based on accent if you don't need to, use the boost ratio in control
+      fenv[0].setTimes(3, decay, 0, 0);
+    }
   }
   // acc = accent_on ? ratio of knob : 0
   // accent_on affects others
   //   * fenv = fenv(dcy=.2)  // dcy looses effect; per schem
   //   * cut = cut - env_mod_bias + fenv*env_mod% + smooth_via_c13(res, fenv*acc%)
   //   * venv = venv + acc%*(LVL_MAX-LVL_NORM)
-  // int acc = ctrl_accent();  // nothing to directly set, only reads, ret 0..255
   int acc = adc_read(ACC_PIN);
   if (acc != accent) {
     if (DEBUG) { Serial.print("Acc "); Serial.print(accent); Serial.print(" -> "); Serial.println(acc); }
@@ -330,7 +340,6 @@ void updateControl () {
   //   on the 303 it is a double/stacked pot, 1 controls res, 2 compresses/smooths acc
   //   see https://www.firstpr.com.au/rwi/dfish/303-unique.html
   //   called the "Accent Sweep Circuit"
-  //int res = ctrl_res();  // reads and sets res, ret 1..255
   int res = adc_read(RES_PIN);
   //res = map(res, 0, 255, RES_MIN, RES_MAX);
   // 1 is max res, 255 is min, so use inverted map
@@ -356,21 +365,7 @@ void updateControl () {
     if (DEBUG) { Serial.print("Env "); Serial.print(env_mod); Serial.print(" -> "); Serial.println(env); }
     env_mod = env;
   }
-  // if !accent_on: fenv(atk=3 msec, dcy=200 msec +(2500-200)*ratio of knob)
-  // if  accent_on: fenv(atk=3 msec, dcy=200 msec)
-  // TODO enable ctrl_fenv_decay(accent_on);  // reads and sets fenv dcy
-  int dcy_val = adc_read(DCY_PIN);
-  int dcy_ms = 200;
-  if (!accent_on) {
-    dcy_ms = map(dcy_val, 0, 255, DCY_MIN, DCY_MAX);
-  }
-  if (dcy_ms != decay) {
-    if (DEBUG) { Serial.print("Dcy "); Serial.print(decay); Serial.print(" -> "); Serial.println(dcy_ms); }
-    decay = dcy_ms;    
-    // see if you don't need to set setADLevel based on accent if you don't need to, use the boost ratio in control
-    fenv[0].setTimes(3, decay, 0, 0);
-  }
-  fenv[0].update();
+  fenv[0].update();  // TODO try removing this to see if speed up happens
   // if !accent_on: cut = cut + fn(fenv(dcy=knob)*env_mod%)
   // if  accent_on: cut = cut + smooth_via_c13(res, fenv*acc%)
   //                res 0% is fenv/acc. res 100% smooth(fenv*acc%)

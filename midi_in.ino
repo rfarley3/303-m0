@@ -13,6 +13,8 @@ MIDI_CREATE_DEFAULT_INSTANCE();
 int note_on[MIDI_NOTE_CNT];
 int note_on_order = 0;
 
+#define ENABLE_MIDI 1  // test speed up, use only the pot
+
 
 void midi_setup () {
   pinMode(MIDI_LED, OUTPUT);
@@ -20,7 +22,7 @@ void midi_setup () {
   // Connect the HandleNoteOn function to the library, so it is called upon reception of a NoteOn.
   MIDI.setHandleNoteOn(HandleNoteOn);  // Put only the name of the function
   MIDI.setHandleNoteOff(HandleNoteOff);  // Put only the name of the function
-  MIDI.begin(MIDI_CHANNEL);  // MIDI_CHANNEL_OMNI means all channels
+  if (ENABLE_MIDI) { MIDI.begin(MIDI_CHANNEL); }
   init_note_on();
 }
 
@@ -39,7 +41,7 @@ void midiHook () {
    */
   midicount++;
   if (midicount > MIDI_RATE) {
-    MIDI.read();
+    if (ENABLE_MIDI) { MIDI.read(); }
     midicount = 0;
   }
 }
@@ -62,13 +64,9 @@ void HandleNoteOn (byte channel, byte note, byte velocity) {
   // if note is new or already on, update its order for most recent priority
   note_on_order++;
   note_on[note] = note_on_order;
-
   // note priority is last, aka most recent, so this could mean a freq change
-  if (note != oscils_note[0]) {
-    note_change(0, note);
-    // this would be where the subosc offset could be calc'ed and set
-    // note_change(1, note - suboscoffset, false);
-  }
+  // callee will check if there is an actual change
+  note_change(0, note);
   // if venv is in ADS, then let it finish, determined in trigger_env
   if (trigger_env(0)) {
     digitalWrite(MIDI_LED, HIGH);
@@ -110,7 +108,7 @@ void HandleNoteOff (byte channel, byte note, byte velocity) {
     return; 
   }
   // note_on_order > 1. There are fallbacks, find it
-  // handle press 1, 2, 3, let go of 2, then 3 should still play, let go of 3, then 1. TODO
+  // handle press 1, 2, 3, let go of 2, then 3 should still play, let go of 3, then 1 should be playing
   int fb_idx = -1;
   int fallback = -1;
   for (int i = 0; i < MIDI_NOTE_CNT; i++) {

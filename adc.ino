@@ -24,7 +24,6 @@
 int adc_linear[256];
 // max res is res=1, min is res=255
 //   to make it config in software, turning the knob "up" aka clockwise needs to be inverted
-int adc_linear_inv[256];
 // convert int 255..0 linear to exponential decay, TODO move to mozzi filter calcs
 // int lin_to_exp[256];
 int adc_exponential[256];  // TODO for cut
@@ -36,7 +35,7 @@ void adc_setup() {
   // #ifdef ADAFRUIT_TRINKET_M0
   // https://diyelectromusic.wordpress.com/2021/03/20/trinket-fm-synthesis-with-mozzi/
   // Changing this to 12 only affects on-board; 8b ADC will not be messed up
-  // default arduino analogReadResolution is 10b 
+  // default arduino analogReadResolution is for on-board ADC (pins 0..4) 10b 0..4095
   // analogReadResolution(12);
   analogReadResolution(8);  // for ease, just make everything 8b, this may cause filter cutoff stepping
   fill_adc_maps();
@@ -46,15 +45,15 @@ void adc_setup() {
 void fill_adc_maps() {
   /* Create lookup tables to avoid float calcs during main loop */
   for (int i = 0; i < POT_8b_ZERO; i++) {
-    adc_exponential[i] = adc_linear_inv[255 - i] = adc_linear[i] = 0;
+    adc_exponential[i] = adc_linear[i] = 0;
   }
   for(int i = POT_8b_ZERO; i < (POT_8b_MAX - POT_8b_ZERO); i++) {
     float perc = (float)(i - POT_8b_ZERO) / (float)(POT_8b_MAX - (2 * POT_8b_ZERO));
-    adc_linear_inv[255 - i] = adc_linear[i] = (int)(255.0 * perc);
+    adc_linear[i] = (int)(255.0 * perc);
     adc_exponential[i] = 0; // TODO each step is larger as i increases
   }
   for(int i = (POT_8b_MAX - POT_8b_ZERO); i <= POT_8b_MAX; i++) {
-    adc_exponential[i] = adc_linear_inv[255 - i] = adc_linear[i] = 255;
+    adc_exponential[i] = adc_linear[i] = 255;
   }
 }
 
@@ -84,13 +83,13 @@ int _adc_read(uint8_t ain_idx) {
    *  it's faster to send the request for the next sample now
    *  then then it'll be closer to ready next time
    */
-  uint8_t data = 0;
   Wire.beginTransmission(ADDR_ADS0);
   Wire.write(adc_read_cmd(ain_idx));
-  Wire.endTransmission();  
+  Wire.endTransmission();
   // Request 1 byte of data
   Wire.requestFrom(ADDR_ADS0, 1);
-  // Read 1 byte of data; TODO add timeout
+  uint8_t data = 0;
+  // Read 1 byte of data; consider adding timeout
   if (Wire.available() == 1) {
     data = Wire.read();
   }
@@ -100,7 +99,7 @@ int _adc_read(uint8_t ain_idx) {
 
 uint8_t adc_read_cmd(uint8_t ain_idx) {
   /* Use the datasheet to create the command to read a single-ended, internal ref, Ax */
-  // TODO assert ain_idx < 8
+  // consider asserting ain_idx < 8
   // for ADS7830 8 chan 8b ADC over I2C
   // https://kevinboone.me/adc.html?i=1
   // uint8_t single_ended = 0x80;
