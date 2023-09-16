@@ -11,6 +11,7 @@ long firstPixelHue = 0;
 
 
 void dotstar_setup() {
+  /* Same purpose as primary file setup */
   // Start with built-in Dotstar RGB LED turned off
   strip.begin();
   strip.clear();
@@ -20,6 +21,9 @@ void dotstar_setup() {
 
 
 void rainbowHook() {
+  /* See if you really want to do this, you probably don't want to loose time each loop
+   * use a counter instead of timer to avoid interrupts
+   */
   rainbow_loops++;
   if (rainbow_loops % 8192 == 0) {
     rainbow(firstPixelHue);
@@ -31,16 +35,17 @@ void rainbowHook() {
 
 
 void rainbow(long firstPixelHue) {
-    for(int i = 0; i < strip.numPixels(); i++) {
-      // Offset pixel hue by an amount to make one full revolution of the
-      // color wheel (range of 65536) along the length of the strip
-      int pixelHue = firstPixelHue + (i * 65536L / strip.numPixels());
-      // strip.ColorHSV() can take 1 or 3 arguments: a hue (0 to 65535) or
-      // optionally add saturation and value (brightness) (each 0 to 255).
-      // Here we're using just the single-argument hue variant. The result
-      // is passed through strip.gamma32() to provide 'truer' colors
-      // before assigning to each pixel:
-      strip.setPixelColor(i, strip.gamma32(strip.ColorHSV(pixelHue)));
-    }
-    strip.show(); // Update strip with new contents
+  /* Per example, for each Pixel change the color, but do it so if you have more than one, they chase */
+  for(int i = 0; i < strip.numPixels(); i++) {
+    // Offset pixel hue by an amount to make one full revolution of the
+    // color wheel (range of 65536) along the length of the strip
+    int pixelHue = firstPixelHue + (i * 65536L / strip.numPixels());
+    // strip.ColorHSV() can take 1 or 3 arguments: a hue (0 to 65535) or
+    // optionally add saturation and value (brightness) (each 0 to 255).
+    // Here we're using just the single-argument hue variant. The result
+    // is passed through strip.gamma32() to provide 'truer' colors
+    // before assigning to each pixel:
+    strip.setPixelColor(i, strip.gamma32(strip.ColorHSV(pixelHue)));
+  }
+  strip.show(); // Update strip with new contents
 }
