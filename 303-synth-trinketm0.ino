@@ -66,9 +66,6 @@ There is an 'official' tuning for the VCF.
 According to the Roland TB-303 manual, when playing C1 (65.4Hz) with the cutoff frequency knob set to 50%, saw waveform, and resonance knob at 100%, the resonance frequency should be 500Hz (give or take 100Hz depending on how it sounds to you).
 You can perform this tuning by either applying 3.0VDC to the VCO or finishing the entire assembly and using something like Keyboard mode to trigger the note. "
 */
-
-#include <MIDI.h>
-
 #include <MozziGuts.h>
 #include <Oscil.h> // oscillator template
 // ~/Arduino/libraries/Mozzi/tables 
@@ -82,10 +79,7 @@ You can perform this tuning by either applying 3.0VDC to the VCO or finishing th
 #include <mozzi_midi.h>
 #include <ADSR.h>
 
-
-// use #define for CONTROL_RATE, not a constant
-#define CONTROL_RATE 64 // Hz, powers of 2 are most reliable
-
+/* adc defines */
 #define RES_PIN 0
 #define OSC0WAVT_PIN 1
 #define DCY_PIN 2
@@ -97,6 +91,13 @@ You can perform this tuning by either applying 3.0VDC to the VCO or finishing th
 // will be redirected to on-board_adc or pin 4
 #define CUT_PIN 8
 
+/* midi defines */
+#define MIDI_CHANNEL 1
+
+
+// use #define for CONTROL_RATE, not a constant
+#define CONTROL_RATE 64 // Hz, powers of 2 are most reliable
+
 // for why DEF_pot* see lines 300ish in https://github.com/diyelectromusic/sdemp/blob/main/src/SDEMP/TrinketUSBMIDIMultiPotMozziSynth3/TrinketUSBMIDIMultiPotMozziSynth3.ino
 // on-board ADC (pins 0..4) 10b 0..4095
 //#define CUT_PIN 4
@@ -106,13 +107,6 @@ You can perform this tuning by either applying 3.0VDC to the VCO or finishing th
 //#define DEF_potRES POT_8b_MAX  // higher value means lower resonance for SVFilter
 //#define OSC0WAVT_PIN 1
 #define DEF_potOSC0WAVT 0
-
-// Set the MIDI Channel to listen on
-#define MIDI_CHANNEL 1
-#define MIDI_RATE    16    // Cycles through the loop() function
-#define MIDI_LED LED_BUILTIN // shows if MIDI is being recieved
-int midicount = 0;
-MIDI_CREATE_DEFAULT_INSTANCE();
 
 #define NUM_OSCILS 1
 Oscil<COS2048_NUM_CELLS, AUDIO_RATE> oscils[NUM_OSCILS];
@@ -130,14 +124,6 @@ int potosc0wavt = DEF_potOSC0WAVT;
 //  Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin(SIN2048_DATA),
 //  Oscil <WHITENOISE8192_NUM_CELLS, AUDIO_RATE> aNoise(WHITENOISE8192_DATA)  // noise always at end
 //];
-//const uint8_t WAVEFORM0_LEN = 2;
-//const uint8_t WAVEFORM0_NOISE_START = 1;
-//uint8_t WAVEFORM0_IDX = 0;  // default
-//float WAVEFORM0_FRQ = 440; // default starting freq concert A
-#define MIDI_NOTE_CNT 128
-int note_on[MIDI_NOTE_CNT];
-int note_on_order = 0;
-
 
 StateVariable <LOWPASS> svf; // can be LOWPASS, BANDPASS, HIGHPASS or NOTCH
 // svf freq range is 20 Hz to AUDIO_RATE/4 (32k/4 = 8192)
@@ -185,7 +171,7 @@ int accent_level = LVL_NORM;
 #define DEBUG 1
 
 
-void setup_debug () {
+void debug_setup () {
   /* if debug off, we don't need serial */
   if (!DEBUG) {
     return;
@@ -196,16 +182,22 @@ void setup_debug () {
 
 
 void setup () {
-  pinMode(MIDI_LED, OUTPUT);
-  setup_debug();
+  debug_setup();
   adc_setup();
   dotstar_setup();
+  midi_setup();
+  mozzi_setup();
+}
 
-  // Connect the HandleNoteOn function to the library, so it is called upon reception of a NoteOn.
-  MIDI.setHandleNoteOn(HandleNoteOn);  // Put only the name of the function
-  MIDI.setHandleNoteOff(HandleNoteOff);  // Put only the name of the function
-  MIDI.begin(MIDI_CHANNEL);  // MIDI_CHANNEL_OMNI means all channels
-  init_note_on();
+
+void loop(){
+  audioHook(); // required here
+  rainbowHook();
+  midiHook();
+}
+
+
+void mozzi_setup () {
   oscils_freq[0] = 440;
   oscils_note[0] = 81;  // A4
   oscils_playing[0] = false;
@@ -224,21 +216,6 @@ void setup () {
   fenv[0].setADLevels(LVL_NORM, 0);
   fenv[0].setTimes(3, 2500, 0, 0); // 303 FENV delay changes with knob, levels change as function of env mod or accent, res
   startMozzi(CONTROL_RATE); // :)
-}
-
-
-void loop(){
-  audioHook(); // required here
-  rainbowHook();
-  midiHook();
-}
-
-
-void init_note_on () {
-  /* we track the note on order within this, with one element per possible midi note value */
-  for (int i = 0; i < MIDI_NOTE_CNT; i++) {
-    note_on[i] = -1;
-  }
 }
 
 
@@ -270,51 +247,6 @@ void set_wavetable (int oscil_idx) {
 }
 
 
-void midiHook () {
-  /* we don't need to check MIDI every loop, here's a sane amount */
-  midicount++;
-  if (midicount > MIDI_RATE) {
-    MIDI.read();
-    midicount = 0;
-  }
-}
-
-
-void HandleNoteOn (byte channel, byte note, byte velocity) {
-  /* MIDI Hook when note on message received */
-  // there would be where channel mapping to instrument (bass vs kd vs hats) would route noteOns
-  // assume only bass (303) for now
-  if (DEBUG) { Serial.print("MIDI note on "); Serial.print(channel); Serial.print(" "); Serial.print(note); Serial.print(" "); Serial.println(velocity); }
-  if (velocity == 0) {
-    HandleNoteOff(channel, note, velocity);
-    return;
-  }
-  // prob doesn't matter, but error check bc why not
-  if (note_on_order >= MIDI_NOTE_CNT) {
-    if (DEBUG) { Serial.println("Reach max note_on_order, ignoring note"); }
-    return;
-  }
-  // if note is new or already on, update its order for most recent priority
-  note_on_order++;
-  note_on[note] = note_on_order;
-
-  // note priority is last, aka most recent, so this could mean a freq change
-  if (note != oscils_note[0]) {
-    note_change(0, note);
-    // this would be where the subosc offset could be calc'ed and set
-    // note_change(1, note - suboscoffset, false);
-  }
-  // if venv is in ADS, then let it finish
-  if (oscils_playing[0]) {
-    // just let the freq change happen above and finish existing env trigger
-    // TODO see if the env has gone idle, or generally fully expired. if so trigger, else then continue with this return
-    return;
-  }
-  trigger_env(0);
-  digitalWrite(MIDI_LED, HIGH);
-}
-
-
 void note_change (int osc_idx, int note) {
   /* the note changed, update globals, convert to freq, and set the osc */
   int freq = (int)mtof(note);
@@ -325,18 +257,26 @@ void note_change (int osc_idx, int note) {
 }
 
 
-void trigger_env (int osc_idx) {
+bool trigger_env (int osc_idx) {
   /* trigger both envelopes, probably a new note (not a glide) happened */
-  if (DEBUG) { Serial.println("Triggering ENV ADSR"); }
+    // if venv is in ADS, then let it finish
+  if (oscils_playing[osc_idx]) {
+    // if there was a freq change in the caller, this will mean the orig/existing env will just continue
+    // TODO check the status of the venv (always longer than fenv) and if idle/complete
+    //      then call stop_env and then trigger the env
+    return false;
+  }
+  if (DEBUG) { Serial.println("Triggering ENV ADSR"); }  
   oscils_playing[osc_idx] = true;
   venv[osc_idx].noteOn();
   fenv[osc_idx].noteOn();
+  return true;
 }
 
 
 void stop_env (int osc_idx) {
   /* when no note pressed, switch to rel. with 0 sustain you get here if decay not finished, 303 rel is 0 anyways */
-  if (DEBUG) { Serial.println("Triggering VENV Rel (is currently playing"); }
+  if (DEBUG) { Serial.println("Triggering VENV Rel (is currently playing but stopped)"); }
   // if (venv[0].playing()) {
   oscils_playing[osc_idx] = false;
   venv[osc_idx].noteOff();
@@ -344,81 +284,20 @@ void stop_env (int osc_idx) {
 }
 
 
-void HandleNoteOff (byte channel, byte note, byte velocity) {
-  /* MIDI Hook when note off message received (or note on of 0 velocity */
-  if (DEBUG) { Serial.print("MIDI note off "); Serial.print(channel); Serial.print(" "); Serial.print(note); Serial.print(" "); Serial.println(velocity); }
-  int note_order = note_on[note];
-  if (note_order == -1) {
-    // this note is already off, ignore
-    if (DEBUG) { Serial.println("Note has no note order, shouldn't be here, ignoring"); }
-    return;
-  }
-  if (note_on_order == 0) {
-    if (DEBUG) { Serial.println("Zero note_on_order, shouldn't be here, we got a note while we think no notes are playing, ignoring"); }
-    return;
-  }
-  note_on[note] = -1;
-  // if this note is not the priority note, just remove it from the fallbacks
-  if (note_order < note_on_order) {
-    if (DEBUG) { Serial.println("Not priority note, removed from fallbacks"); }
-    // earlier note_on[note] of -1 removes it from fallbacks
-    return;
-  }
-  // shouldn't happen, ignore for now
-  if (note_order > note_on_order) {
-    if (DEBUG) { Serial.println("Out of bounds note order, ignoring"); }
-    return;
-  }
-  // note_order == note_on_order, so this is the playing note (highest priority)
-  if (note_on_order == 1) {
-    // there is only one note
-    note_on_order = 0;
-    stop_env(0);
-    digitalWrite(MIDI_LED, LOW);
-    return; 
-  }
-  // note_on_order > 1. There are fallbacks, find it TODO TODO
-  // handle press 1, 2, 3, let go of 2, then 3 should still play, let go of 3, then 1. TODO
-  int fb_idx = -1;
-  int fallback = -1;
-  for (int i = 0; i < MIDI_NOTE_CNT; i++) {
-    if (note_on[i] > fb_idx) {
-      fb_idx = note_on[i];
-      fallback = i;
-    }
-  }
-  if (fallback == -1) {
-    // 0 is note a valid MIDI note
-    if (DEBUG) { Serial.println("No fallback found, ignoring"); }
-    note_on_order = 0;
-    stop_env(0);
-    digitalWrite(MIDI_LED, LOW);
-    return; 
-  }
-  // we have a fallback, so reduce the size of the queued notes
-  if (note_on_order > 0) {
-    note_on_order--;
-  }
-  // another note needs to played instead
-  // just switch freqs and then let existing env keep playing
-  if (DEBUG) { Serial.print("Found fallback note "); Serial.println(fallback); }
-  note_change(0, fallback);
-}
-
-
-// for testing, this is c harmonic minor
-byte notes[] = { 48, 50, 51, 53, 55, 56, 58, 60 };
-
-
+// TODO reduce how many knobs are checked how often. reduce compute in this function
 void updateControl () {
-  // called by mozzi every CONTROL_RATE loops
-  // meant to update things, and then in audioHook, use faster next() to extrapolate what to output via DAC
+  /* Mozzi calls this every CONTROL_RATE, keep as fast as possible as it will hold up AUDIO_RATE calls
+   *  for wave forms (like oscil, env shapes), call .update() per CONTROL_RATE and .next() per AUDIO_RATE in audioHook()
+   *    update calcs the actual value of that wave
+   *    next extrapolates between actual and next
+   */
   // this is where you read knobs and set/update any numbers extrapolated/used within audioHook
   int tbd_val = adc_read(TBD_PIN);
   tbd_val = map(tbd_val, 0, 255, 0, 8);  
   tbd_val = constrain(tbd_val, 0, 7); 
   if (tbd_val != tbd) {
-    // TODO trigger handleNoteOn
+    // for testing, this is c harmonic minor
+    byte notes[] = { 48, 50, 51, 53, 55, 56, 58, 60 };
     if (DEBUG) { Serial.print("Tbd "); Serial.print(tbd); Serial.print(" -> "); Serial.println(tbd_val); } 
     HandleNoteOff(MIDI_CHANNEL, notes[tbd], LVL_NORM);
     tbd = tbd_val;
@@ -538,7 +417,16 @@ void updateControl () {
 }
 
 
-AudioOutput_t updateAudio(){  
+AudioOutput_t updateAudio () {
+  /* Mozzi calls this every AUDIO_RATE, keep fast, returns 8b int, centered around 0, that gets written to a DAC
+   *  DAC will output 0v - 3.3v, so "centered around 0" means centered around 1.15v
+   *  put DAC through a cap to remove DC and have 1.15 peak VAC. Put that through a voltage divider to reach your preferred line level.
+   *  
+   *  can access all the controls from updateControl, but ideally those are only set once per CONTROL_RATE, so do them there
+   *  for wave forms (like oscil, env shapes), call .update() per CONTROL_RATE in updateControl() and .next() here
+   *    update calcs the actual value of that wave
+   *    next extrapolates between actual and next
+   */
   // return MonoOutput::from8Bit(aSin.next()); // return an int signal centred around 0
   // 'from' means to convert from 'Nbit' to audio output bit width (hardware specific)
   // return MonoOutput::fromAlmostNBit(12, svf.next(oscils[0].next()));

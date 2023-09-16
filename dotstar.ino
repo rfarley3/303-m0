@@ -25,7 +25,7 @@ void rainbowHook() {
    * use a counter instead of timer to avoid interrupts
    */
   rainbow_loops++;
-  if (rainbow_loops % 8192 == 0) {
+  if (rainbow_loops > 8192) {
     rainbow(firstPixelHue);
     // Color wheel has a range of 65536 and it's OK if we roll over, but % bc why not
     firstPixelHue = (firstPixelHue + 256) % 65536;
