@@ -413,7 +413,7 @@ void updateControl () {
   if (cut_value != cutoff) {
     if (DEBUG) { Serial.print("Cut "); Serial.print(cutoff); Serial.print(" -> "); Serial.println(cut_value); }
     cutoff = cut_value;
-    update_lpf = true;
+    // update_lpf = true;
   }
   // now we adjust the cut
   // for now, just give it the spike to know it works
