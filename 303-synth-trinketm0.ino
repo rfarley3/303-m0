@@ -24,8 +24,8 @@
     * ADC (ADS7830 8 chan 8b) addr x4b
       * Y A0 res
       * Y A1 wave
-      *   A2 env mod
-      *   A3 decay
+      * Y A2 env mod
+      * Y A3 decay
       *   A4 accent
       *   A5 trig (temporary for not needing keyboard)
       *   A6 TBD
@@ -35,6 +35,11 @@
     * add Serial.read to send notes over TTY and not need keyboard for testing
     * SAMD21 ADC bug
     * zombie osc_playing, is this an issue?
+    * test accent on everyother, add math for VENV boost
+    * test accent to dcy shortening
+    * work math for env_mod to cut
+    *   w/o accent: reduce cut by env_mod, then pluck it up to the amount it was reduced to (cut is lower and pluck is centered on actual cut)
+    *   w   accent: reduce cut by env_mod, make a second dcy that is reduced by accent minus a diode and reduced?smoothed?what? by res
 
     Version road map:
       * Y verify turns on, use dotstar
@@ -47,9 +52,9 @@
       * Y fix env
       * add env shaping over cc
       * Y determine default 303 env shape
-      * add env knob
+      * Y add env knob
       * add drone at max env
-      * add decay knob
+      * Y add decay knob
       * add vel over cc
       * add acc knob
       * sub-osc: play constant sub-osc square -12
@@ -314,7 +319,7 @@ void updateControl () {
    *    next extrapolates between actual and next
    *  aka this is where you read knobs and set/update any numbers extrapolated/used within audioHook
    */
-  bool update_lpf = false;
+  // bool update_lpf = false;
   control_cnt++;
   int tbd_val = 0;
   int waveform = 0;
@@ -329,12 +334,14 @@ void updateControl () {
     if (tbd_val != tbd) {
       // for testing, this is c harmonic minor
       byte notes[] = { 48, 50, 51, 53, 55, 56, 58, 60 };
-      if (DEBUG) { Serial.print("Tbd "); Serial.print(tbd); Serial.print(" -> "); Serial.println(tbd_val); } 
       HandleNoteOff(MIDI_CHANNEL, notes[tbd], LVL_NORM);
+      // for testing alternate accent
+      accent_on = !accent_on;
+      if (DEBUG) { Serial.print("Tbd "); Serial.print(tbd); Serial.print(" -> "); Serial.print(tbd_val); Serial.print(" a? "); Serial.println(accent_on); } 
       tbd = tbd_val;
       HandleNoteOn(MIDI_CHANNEL, notes[tbd_val], LVL_NORM);
     }
-    // freq = fn(note, tuning offset, glide)
+    // freq = fn(note, tuning offset, glide, midi pitch bend)
     // wave = ratio of knob to number of options
     waveform = adc_read(OSC0WAVT_PIN);
     waveform = map(waveform, 0, 255, 0, osc0_wavt_cnt);  
@@ -366,19 +373,20 @@ void updateControl () {
   if (acc != accent) {
     if (DEBUG) { Serial.print("Acc "); Serial.print(accent); Serial.print(" -> "); Serial.println(acc); }
     accent = acc;
+    // update_lpf = true;
   }
   // res = ratio of knob
   //   res has an effect on fenv, the higher it is, the smoother the curve (C9 in schem)
   //   on the 303 it is a double/stacked pot, 1 controls res, 2 compresses/smooths acc
   //   see https://www.firstpr.com.au/rwi/dfish/303-unique.html
-  //   called the "Accent Sweep Circuit"
+  //   called the "Accent Sweep Circuit" and the smoother curve adds a wah/wow to the note
   int res = adc_read(RES_PIN);
   //res = map(res, 0, 255, RES_MIN, RES_MAX);
   // if (DEBUG) { Serial.println(res); }
   if (res != resonance) {
     if (DEBUG) { Serial.print("Res "); Serial.print(resonance); Serial.print(" -> "); Serial.println(res); }
     resonance = res;
-    update_lpf = true;
+    // update_lpf = true;
   }
   // env_mod = ratio of knob
   //   env_mod has an effect on fenv and cut
@@ -391,15 +399,13 @@ void updateControl () {
   if (env != env_mod) {
     if (DEBUG) { Serial.print("Env "); Serial.print(env_mod); Serial.print(" -> "); Serial.println(env); }
     env_mod = env;
-    // does env_mod change? fenv[0].setADLevels(0, 0);
-    update_lpf = true;
+    // update_lpf = true;
   }
   fenv[0].update();
   // if !accent_on: cut = cut + fn(fenv(dcy=knob)*env_mod%)
   // if  accent_on: cut = cut + smooth_via_c13(res, fenv*acc%)
   //                res 0% is fenv/acc. res 100% smooth(fenv*acc%)
   //                see https://www.firstpr.com.au/rwi/dfish/303-unique.html
-  // int cut = ctrl_cut();  // only reads, ret 20..8192
   int cut_value = lin_to_exp[adc_read(CUT_PIN)];  // convert to exp (less change per step at lower values; more at higher)
   // int cut_freq = map(cut_value, 0, 255, CUT_MIN, CUT_MAX);
   // mozziAnalogRead value is 0-1023 AVR, 0-4095 on STM32; set with analogReadResolution in setup
@@ -416,24 +422,6 @@ void updateControl () {
   // find the headroom above the current cut, then use fenv as a % against that
   fenv_level = ((CUT_MAX - cutoff) * fenv_level) >> 8;
   int tmp_cutoff = constrain(cutoff + fenv_level, 0, 255);
-  // fenv_level = (fenv_level * ) >> 8;
-  // fenv_level = constrain(fenv_level + cutoff, 0, 256)
-  // int fenv_boost = 0;
-  // if fenv_boost has changed since last time update_lpf=true;
-  // use shifts instead of float/perc multipliers
-//  if (false /*TODO*/ && env_mod && !accent_on) {
-//    // float fenv_boost_perc = acc_pot_to_gain_val[env_mod];  // >= 1.0
-//    float fenv_attenuate_perc = (float) fenv_level * ((float) env_mod / 255.0);  // 0..255
-//    fenv_attenuate_perc = fenv_attenuate_perc / 255.0;  // 0..1
-//    float gain = ((float)LVL_MAX - (float)LVL_NORM) / (float)LVL_NORM;  // >= 1.0
-//    float attenuated_gain = 1.0 + ((gain - 1.0) * fenv_attenuate_perc);  // >= 1.0
-//    fenv_boost = (int)((float)cut + ((float)(CUT_MAX - cut) * attenuated_gain));
-//    // fenv_boost = calc_cut(cut, fenv[0], env_mod);
-//  }
-//  else if (accent_on) {
-//    // TODO
-//    // fenv_boost = calc_cut_acc(cut, fenv[0], acc, res);
-//  }
   // if update_lpf {
   lpf.setCutoffFreqAndResonance(tmp_cutoff, resonance);
   // float venv_accent_boost = acc_pot_to_gain_val[acc];  // ret 1..(LVL_MAX/LVL_NORM)
@@ -455,5 +443,6 @@ AudioOutput_t updateAudio () {
    *    next extrapolates between actual and next
    */
   int vca_exp = lin_to_exp[venv[0].next()];  // 0..255 -> exp(0..255)
+  // TODO boost if accent_on
   return MonoOutput::from8Bit((vca_exp * lpf.next(oscils[0].next())) >> 8);
 }
