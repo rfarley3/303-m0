@@ -73,10 +73,8 @@ int adc_read(uint8_t ain_idx) {
   }
   else {
     val = _adc_read(ain_idx);
-    //if (ain_idx == RES_PIN) { Serial.print("1 "); Serial.println(val); }
   }
   val = adc_linear[val];
-  // if (ain_idx == RES_PIN) { Serial.print("2 "); Serial.println(val); }
   return val;
 }
 

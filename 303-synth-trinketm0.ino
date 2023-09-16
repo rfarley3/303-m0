@@ -33,12 +33,11 @@
    
     TODO
     * adc_expontential and apply to cut
-    * send req for value after read
+    * send i2c req for value after read to prep for next read
     * swap out filter for something better
     * add max/min for filter and res
     * if res is still reverse (1 max) then switch to adc_lin_inv
     * add Serial.read to send notes over TTY and not need keyboard for testing
-    * add #defines for debug stmts and Serial read/write
 
     Version road map:
       * Y verify turns on, use dotstar
@@ -183,12 +182,22 @@ ADSR <CONTROL_RATE, CONTROL_RATE> fenv[NUM_OSCILS];
 bool accent_on = false;
 int accent_level = LVL_NORM;
 
+#define DEBUG 1
 
-void setup(){
+
+void setup_debug () {
+  /* if debug off, we don't need serial */
+  if (!DEBUG) {
+    return;
+  }
   Serial.begin(115200);
   Serial.println("Hello world");
-  pinMode(MIDI_LED, OUTPUT);
+}
 
+
+void setup () {
+  pinMode(MIDI_LED, OUTPUT);
+  setup_debug();
   adc_setup();
   dotstar_setup();
 
@@ -218,21 +227,31 @@ void setup(){
 }
 
 
-void init_note_on() {
+void loop(){
+  audioHook(); // required here
+  rainbowHook();
+  midiHook();
+}
+
+
+void init_note_on () {
+  /* we track the note on order within this, with one element per possible midi note value */
   for (int i = 0; i < MIDI_NOTE_CNT; i++) {
     note_on[i] = -1;
   }
 }
 
 
-void set_wavetables() {
+void set_wavetables () {
+  // for each osc, call set wavetable, which will look at global oscils_wavt */
   for (int i = 0; i < NUM_OSCILS; i++) {
     set_wavetable(i);
   }
 }
 
 
-void set_wavetable(int oscil_idx) {
+void set_wavetable (int oscil_idx) {
+  /* look at global storage of what wavetable this osc should use, map it to the actual lib table, and set it */
   int wavt = oscils_wavt[oscil_idx];
   // TODO oscil specific order of tables (ex: LFO vs OSC)
   switch (wavt) {
@@ -250,7 +269,9 @@ void set_wavetable(int oscil_idx) {
   }
 }
 
-void midiHook() {
+
+void midiHook () {
+  /* we don't need to check MIDI every loop, here's a sane amount */
   midicount++;
   if (midicount > MIDI_RATE) {
     MIDI.read();
@@ -259,17 +280,18 @@ void midiHook() {
 }
 
 
-void HandleNoteOn(byte channel, byte note, byte velocity) {
+void HandleNoteOn (byte channel, byte note, byte velocity) {
+  /* MIDI Hook when note on message received */
   // there would be where channel mapping to instrument (bass vs kd vs hats) would route noteOns
   // assume only bass (303) for now
-  Serial.print("MIDI note on "); Serial.print(channel); Serial.print(" "); Serial.print(note); Serial.print(" "); Serial.println(velocity);
+  if (DEBUG) { Serial.print("MIDI note on "); Serial.print(channel); Serial.print(" "); Serial.print(note); Serial.print(" "); Serial.println(velocity); }
   if (velocity == 0) {
     HandleNoteOff(channel, note, velocity);
     return;
   }
   // prob doesn't matter, but error check bc why not
   if (note_on_order >= MIDI_NOTE_CNT) {
-    Serial.println("Reach max note_on_order, ignoring note");
+    if (DEBUG) { Serial.println("Reach max note_on_order, ignoring note"); }
     return;
   }
   // if note is new or already on, update its order for most recent priority
@@ -285,6 +307,7 @@ void HandleNoteOn(byte channel, byte note, byte velocity) {
   // if venv is in ADS, then let it finish
   if (oscils_playing[0]) {
     // just let the freq change happen above and finish existing env trigger
+    // TODO see if the env has gone idle, or generally fully expired. if so trigger, else then continue with this return
     return;
   }
   trigger_env(0);
@@ -293,8 +316,9 @@ void HandleNoteOn(byte channel, byte note, byte velocity) {
 
 
 void note_change (int osc_idx, int note) {
+  /* the note changed, update globals, convert to freq, and set the osc */
   int freq = (int)mtof(note);
-  Serial.print("Freq "); Serial.print(oscils_freq[osc_idx]); Serial.print(" -> "); Serial.println(freq);
+  if (DEBUG) { Serial.print("Freq "); Serial.print(oscils_freq[osc_idx]); Serial.print(" -> "); Serial.println(freq); }
   oscils_freq[osc_idx] = freq;
   oscils_note[osc_idx] = note;
   oscils[osc_idx].setFreq(oscils_freq[osc_idx]);  // +- bend
@@ -302,15 +326,17 @@ void note_change (int osc_idx, int note) {
 
 
 void trigger_env (int osc_idx) {
-  Serial.println("Triggering ENV ADSR");
-  oscils_playing[0] = true;
+  /* trigger both envelopes, probably a new note (not a glide) happened */
+  if (DEBUG) { Serial.println("Triggering ENV ADSR"); }
+  oscils_playing[osc_idx] = true;
   venv[osc_idx].noteOn();
   fenv[osc_idx].noteOn();
 }
 
 
 void stop_env (int osc_idx) {
-  Serial.println("Triggering VENV Rel (is currently playing");
+  /* when no note pressed, switch to rel. with 0 sustain you get here if decay not finished, 303 rel is 0 anyways */
+  if (DEBUG) { Serial.println("Triggering VENV Rel (is currently playing"); }
   // if (venv[0].playing()) {
   oscils_playing[osc_idx] = false;
   venv[osc_idx].noteOff();
@@ -318,28 +344,29 @@ void stop_env (int osc_idx) {
 }
 
 
-void HandleNoteOff(byte channel, byte note, byte velocity) {
-  Serial.print("MIDI note off "); Serial.print(channel); Serial.print(" "); Serial.print(note); Serial.print(" "); Serial.println(velocity);  
+void HandleNoteOff (byte channel, byte note, byte velocity) {
+  /* MIDI Hook when note off message received (or note on of 0 velocity */
+  if (DEBUG) { Serial.print("MIDI note off "); Serial.print(channel); Serial.print(" "); Serial.print(note); Serial.print(" "); Serial.println(velocity); }
   int note_order = note_on[note];
   if (note_order == -1) {
     // this note is already off, ignore
-    Serial.println("Note has no note order, shouldn't be here, ignoring");
+    if (DEBUG) { Serial.println("Note has no note order, shouldn't be here, ignoring"); }
     return;
   }
   if (note_on_order == 0) {
-    Serial.println("Zero note_on_order, shouldn't be here, ignoring");
+    if (DEBUG) { Serial.println("Zero note_on_order, shouldn't be here, we got a note while we think no notes are playing, ignoring"); }
     return;
   }
   note_on[note] = -1;
   // if this note is not the priority note, just remove it from the fallbacks
   if (note_order < note_on_order) {
-    Serial.println("Not priority note, removed from fallbacks");
+    if (DEBUG) { Serial.println("Not priority note, removed from fallbacks"); }
     // earlier note_on[note] of -1 removes it from fallbacks
     return;
   }
   // shouldn't happen, ignore for now
   if (note_order > note_on_order) {
-    Serial.println("Out of bounds note order, ignoring");
+    if (DEBUG) { Serial.println("Out of bounds note order, ignoring"); }
     return;
   }
   // note_order == note_on_order, so this is the playing note (highest priority)
@@ -362,7 +389,7 @@ void HandleNoteOff(byte channel, byte note, byte velocity) {
   }
   if (fallback == -1) {
     // 0 is note a valid MIDI note
-    Serial.println("No fallback found, ignoring");
+    if (DEBUG) { Serial.println("No fallback found, ignoring"); }
     note_on_order = 0;
     stop_env(0);
     digitalWrite(MIDI_LED, LOW);
@@ -374,20 +401,25 @@ void HandleNoteOff(byte channel, byte note, byte velocity) {
   }
   // another note needs to played instead
   // just switch freqs and then let existing env keep playing
-  Serial.print("Found fallback note "); Serial.println(fallback);
+  if (DEBUG) { Serial.print("Found fallback note "); Serial.println(fallback); }
   note_change(0, fallback);
 }
 
 
+// for testing, this is c harmonic minor
 byte notes[] = { 48, 50, 51, 53, 55, 56, 58, 60 };
 
-void updateControl(){
+
+void updateControl () {
+  // called by mozzi every CONTROL_RATE loops
+  // meant to update things, and then in audioHook, use faster next() to extrapolate what to output via DAC
+  // this is where you read knobs and set/update any numbers extrapolated/used within audioHook
   int tbd_val = adc_read(TBD_PIN);
   tbd_val = map(tbd_val, 0, 255, 0, 8);  
   tbd_val = constrain(tbd_val, 0, 7); 
   if (tbd_val != tbd) {
     // TODO trigger handleNoteOn
-    Serial.print("Tbd "); Serial.print(tbd); Serial.print(" -> "); Serial.println(tbd_val);    
+    if (DEBUG) { Serial.print("Tbd "); Serial.print(tbd); Serial.print(" -> "); Serial.println(tbd_val); } 
     HandleNoteOff(MIDI_CHANNEL, notes[tbd], LVL_NORM);
     tbd = tbd_val;
     HandleNoteOn(MIDI_CHANNEL, notes[tbd_val], LVL_NORM);
@@ -399,7 +431,7 @@ void updateControl(){
   waveform = map(waveform, 0, 255, 0, osc0_wavt_cnt);  
   waveform = constrain(waveform, 0, osc0_wavt_cnt - 1); // else 255 is osc0_wavt_cnt which would be an index error
   if (waveform != oscils_wavt[0]) {
-    Serial.print("Osc0-wave "); Serial.print(oscils_wavt[0]); Serial.print(" -> "); Serial.println(waveform);
+    if (DEBUG) { Serial.print("Osc0-wave "); Serial.print(oscils_wavt[0]); Serial.print(" -> "); Serial.println(waveform); }
     oscils_wavt[0] = waveform;
     set_wavetable(0);
   }
@@ -411,7 +443,7 @@ void updateControl(){
   // int acc = ctrl_accent();  // nothing to directly set, only reads, ret 0..255
   int acc = adc_read(ACC_PIN);
   if (acc != accent) {
-    Serial.print("Acc "); Serial.print(accent); Serial.print(" -> "); Serial.println(acc);
+    if (DEBUG) { Serial.print("Acc "); Serial.print(accent); Serial.print(" -> "); Serial.println(acc); }
     accent = acc;
   }
   // res = ratio of knob
@@ -428,9 +460,9 @@ void updateControl(){
   // TODO find reasonable range, prev notes indicate 180..1
   // lower res value means more resonance, valid values are 0-255
   // pot wired to return lower ADC when turned clockwise
-  // Serial.println(res);
+  // if (DEBUG) { Serial.println(res); }
   if (res != resonance) {
-    Serial.print("Res "); Serial.print(resonance); Serial.print(" -> "); Serial.println(res);
+    if (DEBUG) { Serial.print("Res "); Serial.print(resonance); Serial.print(" -> "); Serial.println(res); }
     resonance = res;
   }
   // env_mod = ratio of knob
@@ -442,7 +474,7 @@ void updateControl(){
   int env = adc_read(ENVMOD_PIN);
   // env = map(env, 0, 255, x_MIN, x_MAX);
   if (env != env_mod) {
-    Serial.print("Env "); Serial.print(env_mod); Serial.print(" -> "); Serial.println(env);
+    if (DEBUG) { Serial.print("Env "); Serial.print(env_mod); Serial.print(" -> "); Serial.println(env); }
     env_mod = env;
   }
   // if !accent_on: fenv(atk=3 msec, dcy=200 msec +(2500-200)*ratio of knob)
@@ -454,7 +486,7 @@ void updateControl(){
     dcy_ms = map(dcy_val, 0, 255, DCY_MIN, DCY_MAX);
   }
   if (dcy_ms != decay) {
-    Serial.print("Dcy "); Serial.print(decay); Serial.print(" -> "); Serial.println(dcy_ms);
+    if (DEBUG) { Serial.print("Dcy "); Serial.print(decay); Serial.print(" -> "); Serial.println(dcy_ms); }
     decay = dcy_ms;    
     // see if you don't need to set setADLevel based on accent if you don't need to, use the boost ratio in control
     fenv[0].setTimes(3, decay, 0, 0);
@@ -473,10 +505,10 @@ void updateControl(){
   // int cut_value = mozziAnalogRead(CUT_PIN);
   // int cut_freq = cut_pot_to_val[cut_value];
   // pot wired to return higher ADC when turned clockwise
-  // Serial.print("Cut v "); Serial.println(cut_value);
-  // Serial.print("Cut f "); Serial.println(cut_freq);
+  // if (DEBUG) { Serial.print("Cut v "); Serial.println(cut_value); }
+  // if (DEBUG) { Serial.print("Cut f "); Serial.println(cut_freq); }
   if (cut_freq != cutoff) {
-    Serial.print("Cut "); Serial.print(cutoff); Serial.print(" -> "); Serial.println(cut_freq);
+    if (DEBUG) { Serial.print("Cut "); Serial.print(cutoff); Serial.print(" -> "); Serial.println(cut_freq); }
     cutoff = cut_freq;
   }
   int fenv_boost = 0;
@@ -510,12 +542,5 @@ AudioOutput_t updateAudio(){
   // return MonoOutput::from8Bit(aSin.next()); // return an int signal centred around 0
   // 'from' means to convert from 'Nbit' to audio output bit width (hardware specific)
   // return MonoOutput::fromAlmostNBit(12, svf.next(oscils[0].next()));
-  return MonoOutput::from16Bit((int) (venv[0].next() * svf.next(oscils[0].next())));
-}
-
-
-void loop(){
-  audioHook(); // required here
-  rainbowHook();
-  midiHook();
+  return MonoOutput::from16Bit((int) (venv[0].next() * svf.next(oscils[0].next())));  // why (int)?? why not better faster math?
 }
