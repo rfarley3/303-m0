@@ -77,7 +77,8 @@ You can perform this tuning by either applying 3.0VDC to the VCO or finishing th
 #include <tables/saw2048_int8.h> // saw table for oscillator
 #include <tables/triangle2048_int8.h> // triangle table for oscillator
 #include <tables/square_no_alias_2048_int8.h> // square table for oscillator
-#include <StateVariable.h>
+// #include <StateVariable.h>
+#include <ResonantFilter.h>
 #include <mozzi_rand.h> // for rand()
 #include <mozzi_midi.h>
 #include <ADSR.h>
@@ -101,7 +102,7 @@ You can perform this tuning by either applying 3.0VDC to the VCO or finishing th
 
 // use #define for CONTROL_RATE, not a constant
 #define CONTROL_RATE 64  // Hz, powers of 2 are most reliable
-#define CONTROL_SUBRATE 4  // how often 
+#define CONTROL_SUBRATE 4  // how often you want to check controls that don't need to be checked everytime
 int control_cnt = 0;
 
 
@@ -121,17 +122,18 @@ int osc0_wavt_cnt = 4;  // count of the switch statement options
 //  Oscil <WHITENOISE8192_NUM_CELLS, AUDIO_RATE> aNoise(WHITENOISE8192_DATA)  // noise always at end
 //];
 
-// LowPassFilter lpf;  // can be changed to HighPassFilter, BandPassFilter or NotchFilter
+LowPassFilter lpf;  // can be changed to HighPassFilter, BandPassFilter or NotchFilter
+// cut 0-255 to represent 0-8192 Hz
+// res 0-255, with 255 as max res
 
-StateVariable <LOWPASS> svf; // can be LOWPASS, BANDPASS, HIGHPASS or NOTCH
+// StateVariable <LOWPASS> svf; // can be LOWPASS, BANDPASS, HIGHPASS or NOTCH
 // svf freq range is 20 Hz to AUDIO_RATE/4 (32k/4 = 8192)
-#define CUT_MIN 20
-const int CUT_MAX = AUDIO_RATE >> 2;  // AUDIO_RATE/4;
-// const int cut_max = 20000;  // max moog filter is 20k, prev 16k, what is 303?
+#define CUT_MIN 0
+const int CUT_MAX = 255;
 int cutoff = CUT_MAX;
-#define RES_MIN 1  // min value, but maximum resonance
-const int RES_MAX = 255;  // 180; // observed, but technically 255, max value, but minimum res
-int resonance = 1; //RES_MAX;
+#define RES_MIN 0
+const int RES_MAX = 255;
+int resonance = RES_MIN;
 
 
 // with accent off, these are the time for exponential decay to 10%
@@ -150,7 +152,7 @@ int tbd = 0;
 // <x, y> where x is how often update() will be called and y is how often next()
 // so for this, put update into controlHool and next in audioHook
 ADSR <CONTROL_RATE, AUDIO_RATE> venv[NUM_OSCILS];
-ADSR <CONTROL_RATE, CONTROL_RATE> fenv[NUM_OSCILS];
+// ADSR <CONTROL_RATE, CONTROL_RATE> fenv[NUM_OSCILS];
 // for now normal is 62.5%, accent base is 80%
 #define LVL_MIN 0
 // #define LVL_NORM 160
@@ -195,13 +197,14 @@ void mozzi_setup () {
   oscils_wavt[0] = 0;
   set_wavetables();
   oscils[0].setFreq(oscils_freq[0]);
-  svf.setResonance(resonance);
-  svf.setCentreFreq(cutoff);
+  // svf.setResonance(resonance);
+  // svf.setCentreFreq(cutoff);
+  lpf.setCutoffFreqAndResonance(cutoff, resonance);
   venv[0].setADLevels(accent_level, 0);  // att, dcy; 0-255. 
   //venv[0].setTimes(50,200,10000,200); // testing long note
   venv[0].setTimes(3, 10000, 0, 0); // 303 VENV is constant, accent changes levels
-  fenv[0].setADLevels(LVL_NORM, 0);
-  fenv[0].setTimes(3, 2500, 0, 0); // 303 FENV delay changes with knob, levels change as function of env mod or accent, res
+  // fenv[0].setADLevels(LVL_NORM, 0);
+  // fenv[0].setTimes(3, 2500, 0, 0); // 303 FENV delay changes with knob, levels change as function of env mod or accent, res
   startMozzi(CONTROL_RATE); // :)
 }
 
@@ -261,7 +264,7 @@ bool trigger_env (int osc_idx) {
   if (DEBUG) { Serial.println("Triggering ENV ADSR"); }  
   oscils_playing[osc_idx] = true;
   venv[osc_idx].noteOn();
-  fenv[osc_idx].noteOn();
+  // fenv[osc_idx].noteOn();
   return true;
 }
 
@@ -272,7 +275,7 @@ void stop_env (int osc_idx) {
   // if (venv[0].playing()) {
   oscils_playing[osc_idx] = false;
   venv[osc_idx].noteOff();
-  fenv[osc_idx].noteOff();
+  // fenv[osc_idx].noteOff();
 }
 
 
@@ -322,7 +325,7 @@ void updateControl () {
       if (DEBUG) { Serial.print("Dcy "); Serial.print(decay); Serial.print(" -> "); Serial.println(dcy_ms); }
       decay = dcy_ms;    
       // see if you don't need to set setADLevel based on accent if you don't need to, use the boost ratio in control
-      fenv[0].setTimes(3, decay, 0, 0);
+      // fenv[0].setTimes(3, decay, 0, 0);
     }
   }
   // acc = accent_on ? ratio of knob : 0
@@ -342,12 +345,6 @@ void updateControl () {
   //   called the "Accent Sweep Circuit"
   int res = adc_read(RES_PIN);
   //res = map(res, 0, 255, RES_MIN, RES_MAX);
-  // 1 is max res, 255 is min, so use inverted map
-  //res = RES_MIN + 255 - res;
-  res = constrain(res, RES_MIN, RES_MAX);  // 1..255per StateVariableFilter
-  // TODO find reasonable range, prev notes indicate 180..1
-  // lower res value means more resonance, valid values are 0-255
-  // pot wired to return lower ADC when turned clockwise
   // if (DEBUG) { Serial.println(res); }
   if (res != resonance) {
     if (DEBUG) { Serial.print("Res "); Serial.print(resonance); Serial.print(" -> "); Serial.println(res); }
@@ -365,7 +362,7 @@ void updateControl () {
     if (DEBUG) { Serial.print("Env "); Serial.print(env_mod); Serial.print(" -> "); Serial.println(env); }
     env_mod = env;
   }
-  fenv[0].update();  // TODO try removing this to see if speed up happens
+  // fenv[0].update();  // TODO try removing this to see if speed up happens
   // if !accent_on: cut = cut + fn(fenv(dcy=knob)*env_mod%)
   // if  accent_on: cut = cut + smooth_via_c13(res, fenv*acc%)
   //                res 0% is fenv/acc. res 100% smooth(fenv*acc%)
@@ -373,7 +370,7 @@ void updateControl () {
   // int cut = ctrl_cut();  // only reads, ret 20..8192
   int cut_value = adc_read(CUT_PIN);
   // TODO cut_value = adc_exponential[cut_value]; // convert to exp (less change per step at lower values; more at higher)
-  int cut_freq = map(cut_value, 0, 255, CUT_MIN, CUT_MAX);
+  // int cut_freq = map(cut_value, 0, 255, CUT_MIN, CUT_MAX);
   // mozziAnalogRead value is 0-1023 AVR, 0-4095 on STM32; set with analogReadResolution in setup
   // note that this has been reduced to 8b until testing complete, so cut_value=0..255
   // int cut_value = mozziAnalogRead(CUT_PIN);
@@ -381,11 +378,11 @@ void updateControl () {
   // pot wired to return higher ADC when turned clockwise
   // if (DEBUG) { Serial.print("Cut v "); Serial.println(cut_value); }
   // if (DEBUG) { Serial.print("Cut f "); Serial.println(cut_freq); }
-  if (cut_freq != cutoff) {
-    if (DEBUG) { Serial.print("Cut "); Serial.print(cutoff); Serial.print(" -> "); Serial.println(cut_freq); }
-    cutoff = cut_freq;
+  if (cut_value != cutoff) {
+    if (DEBUG) { Serial.print("Cut "); Serial.print(cutoff); Serial.print(" -> "); Serial.println(cut_value); }
+    cutoff = cut_value;
   }
-  int fenv_boost = 0;
+  // int fenv_boost = 0;
   // use shifts instead of float/perc multipliers
 //  if (false /*TODO*/ && env_mod && !accent_on) {
 //    int fenv_level = fenv[0].next();
@@ -401,8 +398,9 @@ void updateControl () {
 //    // TODO
 //    // fenv_boost = calc_cut_acc(cut, fenv[0], acc, res);
 //  }
-  svf.setResonance(resonance);  // resonance is the global, res is local
-  svf.setCentreFreq(cutoff + fenv_boost);  // cutoff is the global, cut_freq is local
+  // svf.setResonance(resonance);  // resonance is the global, res is local
+  // svf.setCentreFreq(cutoff + fenv_boost);  // cutoff is the global, cut_freq is local
+  lpf.setCutoffFreqAndResonance(cutoff, resonance);
   // seems like need to svf.update() here! but SVF doesn't have that member?!
   // float venv_accent_boost = acc_pot_to_gain_val[acc];  // ret 1..(LVL_MAX/LVL_NORM)
   // venv(atk=3 msec, dcy=5000) * acc%*(LVL_MAX/LVL_NORM)
@@ -425,5 +423,7 @@ AudioOutput_t updateAudio () {
   // return MonoOutput::from8Bit(aSin.next()); // return an int signal centred around 0
   // 'from' means to convert from 'Nbit' to audio output bit width (hardware specific)
   // return MonoOutput::fromAlmostNBit(12, svf.next(oscils[0].next()));
-  return MonoOutput::from16Bit((int) (venv[0].next() * svf.next(oscils[0].next())));  // why (int)?? why not better faster math?
+  // return MonoOutput::from16Bit((int) (venv[0].next() * svf.next(oscils[0].next())));
+  // why (int)?? why not better faster math?
+  return MonoOutput::from16Bit((int) (venv[0].next() * lpf.next(oscils[0].next())));
 }
