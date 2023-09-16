@@ -279,6 +279,40 @@ void stop_env (int osc_idx) {
 }
 
 
+/* 
+import numpy as np                                                                                                                                                                  
+y = np.linspace(0,255,256)
+y = (np.e**(np.log(255)/255))**y 
+y.round(0)
+ */
+const int lin_to_exp[256] = {
+         0,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,
+         1,   1,   1,   1,   1,   1,   1,   1,   2,   2,   2,
+         2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,
+         2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   3,
+         3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,
+         3,   3,   3,   4,   4,   4,   4,   4,   4,   4,   4,
+         4,   4,   4,   4,   5,   5,   5,   5,   5,   5,   5,
+         5,   5,   6,   6,   6,   6,   6,   6,   6,   6,   7,
+         7,   7,   7,   7,   7,   8,   8,   8,   8,   8,   8,
+         9,   9,   9,   9,   9,  10,  10,  10,  10,  10,  11,
+        11,  11,  11,  12,  12,  12,  12,  13,  13,  13,  14,
+        14,  14,  14,  15,  15,  15,  16,  16,  16,  17,  17,
+        18,  18,  18,  19,  19,  20,  20,  21,  21,  21,  22,
+        22,  23,  23,  24,  24,  25,  25,  26,  27,  27,  28,
+        28,  29,  30,  30,  31,  32,  32,  33,  34,  35,  35,
+        36,  37,  38,  39,  39,  40,  41,  42,  43,  44,  45,
+        46,  47,  48,  49,  50,  51,  52,  53,  55,  56,  57,
+        58,  59,  61,  62,  63,  65,  66,  68,  69,  71,  72,
+        74,  76,  77,  79,  81,  82,  84,  86,  88,  90,  92,
+        94,  96,  98, 100, 102, 105, 107, 109, 112, 114, 117,
+       119, 122, 124, 127, 130, 133, 136, 139, 142, 145, 148,
+       151, 155, 158, 162, 165, 169, 172, 176, 180, 184, 188,
+       192, 196, 201, 205, 210, 214, 219, 224, 229, 234, 239,
+       244, 250, 255
+};
+
+
 void updateControl () {
   /* Mozzi calls this every CONTROL_RATE, keep as fast as possible as it will hold up AUDIO_RATE calls
    *  for wave forms (like oscil, env shapes), call .update() per CONTROL_RATE and .next() per AUDIO_RATE in audioHook()
@@ -368,8 +402,7 @@ void updateControl () {
   //                res 0% is fenv/acc. res 100% smooth(fenv*acc%)
   //                see https://www.firstpr.com.au/rwi/dfish/303-unique.html
   // int cut = ctrl_cut();  // only reads, ret 20..8192
-  int cut_value = adc_read(CUT_PIN);
-  // TODO cut_value = adc_exponential[cut_value]; // convert to exp (less change per step at lower values; more at higher)
+  int cut_value = lin_to_exp[adc_read(CUT_PIN)];  // convert to exp (less change per step at lower values; more at higher)
   // int cut_freq = map(cut_value, 0, 255, CUT_MIN, CUT_MAX);
   // mozziAnalogRead value is 0-1023 AVR, 0-4095 on STM32; set with analogReadResolution in setup
   // note that this has been reduced to 8b until testing complete, so cut_value=0..255
@@ -420,10 +453,6 @@ AudioOutput_t updateAudio () {
    *    update calcs the actual value of that wave
    *    next extrapolates between actual and next
    */
-  // return MonoOutput::from8Bit(aSin.next()); // return an int signal centred around 0
-  // 'from' means to convert from 'Nbit' to audio output bit width (hardware specific)
-  // return MonoOutput::fromAlmostNBit(12, svf.next(oscils[0].next()));
-  // return MonoOutput::from16Bit((int) (venv[0].next() * svf.next(oscils[0].next())));
-  // why (int)?? why not better faster math?
-  return MonoOutput::from16Bit((int) (venv[0].next() * lpf.next(oscils[0].next())));
+  int vca_exp = lin_to_exp[venv[0].next()];  // 0..255 -> exp(0..255)
+  return MonoOutput::from8Bit((vca_exp * lpf.next(oscils[0].next())) >> 8);
 }

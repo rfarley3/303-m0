@@ -22,11 +22,6 @@
 //   or it represents a % to apply against a range
 //   or is a gain
 int adc_linear[256];
-// max res is res=1, min is res=255
-//   to make it config in software, turning the knob "up" aka clockwise needs to be inverted
-// convert int 255..0 linear to exponential decay, TODO move to mozzi filter calcs
-// int lin_to_exp[256];
-int adc_exponential[256];  // TODO for cut
 
 
 void adc_setup() {
@@ -45,15 +40,14 @@ void adc_setup() {
 void fill_adc_maps() {
   /* Create lookup tables to avoid float calcs during main loop */
   for (int i = 0; i < POT_8b_ZERO; i++) {
-    adc_exponential[i] = adc_linear[i] = 0;
+    adc_linear[i] = 0;
   }
   for(int i = POT_8b_ZERO; i < (POT_8b_MAX - POT_8b_ZERO); i++) {
     float perc = (float)(i - POT_8b_ZERO) / (float)(POT_8b_MAX - (2 * POT_8b_ZERO));
     adc_linear[i] = (int)(255.0 * perc);
-    adc_exponential[i] = 0; // TODO each step is larger as i increases
   }
   for(int i = (POT_8b_MAX - POT_8b_ZERO); i <= POT_8b_MAX; i++) {
-    adc_exponential[i] = adc_linear[i] = 255;
+    adc_linear[i] = 255;
   }
 }
 
@@ -82,6 +76,8 @@ int _adc_read(uint8_t ain_idx) {
   /* Do the actual request for data and then wait for/read the response 
    *  it's faster to send the request for the next sample now
    *  then then it'll be closer to ready next time
+   *  but you can't do that when you don't know what the read is answering
+   *  not worth the overhead to track
    */
   Wire.beginTransmission(ADDR_ADS0);
   Wire.write(adc_read_cmd(ain_idx));
