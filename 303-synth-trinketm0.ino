@@ -501,14 +501,17 @@ void updateControl () {
   // for now, just give it the spike to know it works
   fenv[0].update();  // does this need to happen every ctrl or can it be skipped if nothing is playing?
   int fenv_level = (fenv[0].next() * env_mod) >> 8;  // use env_mod as a % on fenv and preserve 8b
-  fenv_level = lin_to_exp[fenv_level];  // scale to be exponential decay
+  // fenv_level = lin_to_exp[fenv_level];  // scale to be exponential decay
   // make a temp cut reduced by env_mod
+  int tmp_cutoff = (cutoff * (255 - env_mod)) >> 8;  // reduce cutoff as % of inverse of env_mod
   // find the headroom above the temp cut, then use fenv as a % against that
-  fenv_level = ((CUT_MAX - cutoff) * fenv_level) >> 8;  // and preserve 8b
+  int fenv_boost = ((CUT_MAX - tmp_cutoff) * fenv_level) >> 8;  // and preserve 8b
+  tmp_cutoff = tmp_cutoff + fenv_boost;
   // avoid aliasing due to integer overflow, this is like hard clipping, could benefit from compression-like alg, or assurances against int overflow
-  int tmp_cutoff = constrain(cutoff + fenv_level, 0, 255);
+  tmp_cutoff = constrain(tmp_cutoff, 0, 255);
   // if update_lpf { and if nothing is playing then don't do the cutoff calcs
   // might as well call this if anything changes, so there isn't the risk of a cut/res jump if a ctrl lags after a noteOn
+  // to avoid some distortion it may be worth reducing resonance to ~240 when cutoff < 20
   lpf.setCutoffFreqAndResonance(tmp_cutoff, resonance);
   // float venv_accent_boost = acc_pot_to_gain_val[acc];  // ret 1..(LVL_MAX/LVL_NORM)
   // venv(atk=3 msec, dcy=5000) * acc%*(LVL_MAX/LVL_NORM)
