@@ -49,23 +49,68 @@
     Version road map:
       * Y verify turns on, use dotstar
       * Y dac: play tone and test speaker/line out
-      * Y cut pot: above but respond to cut adjust
-      * Y res pot on adc: above but also response to res adjust
+      * Y cut pot: respond to cut adjust, no other effects from knob
+      * Y res pot on adc: respond to res adjust
+          * figure out accent driven smoother circuit later (C13/Wow circuit per Devil Fish)
       * Y osc waveform selector: add pot to adc and test changing waveforms
       * Y midi input for note on/off (gate and pitch)
       * Y fix multiple notes held, etc
-      * Y fix env
-      * add env shaping over cc
       * Y determine default 303 env shape
-      * Y add env knob
-      * add drone at max env
-      * Y add decay knob
-      * add vel over cc
-      * add acc knob
+          * N/A add env shaping over cc
+      * Y venv to be exp decay, with fixed long gate
+          * N/A add Serial.read to send notes over TTY and not need keyboard for testing
+          * Y Used a spare knob to trigger notes in a scale when turned, will be removed after testing
+          * N/A add drone at max env
+      * Y decay pot on adc: adjust fenv decay time, no other effects from knob
+      * Y fenv
+          * Y adjustable length by decay knob, but if accent_on then fixed
+          * Y exp decay using lin_to_exp
+      * Y env_mod pot on adc:
+          * Y adjust fenv as % headroom of cut
+          * Y adjusts cut lower as env_mod increased (Gimmick circuit per manual)
+              * Y allows filter sweep even with cut is max
+              * Y allows sweep to move through (above/at/below) cut freq instead of only above it
+      * Y fix lpf integer overflow
+      * 
+      * Are all OSC in tune? 
+    wave_saw.setFreq(freq * (float) SAW8192_SAMPLERATE / (float) SAW8192_NUM_CELLS);
+  lpf.setCutoffFreq((amt * env.get() + (1.0 - amt)) * cutoff * 150); (weighted fenv + weighted inverse cut) *150 (must be the max they used for cut)
+      * HERE fix VENV clicking
+      *     maybe VENV level should be 255 and then in update audio scaled down if not accent? for consistency? in case the spike is due to level being NORM but exp expecting MAX?
+      *       where is it coming fomr?
+      *       best best if vca attack, smoothing helped, but is there a better way? try no serial? no midi? is it a clock/speed issue?)
+      * add vel threshold from noteon as accented
+          * alternate any input as accented or not
+          * add cc to turn it on and off
+      * accent pot on adc
+          * Boost VCA within audioUpdate by LVL_MAX/LVL_NORM=255/208 in some quick non-int way
+          * Make formula to make a duplicate (aka dup-fenv, accented fenv) of fenv (primary, from env_mod)
+            * Reduced by accent knob
+            * Constant value reduction from a diode
+            * Smooth it more as res increases
+            * adapt fenv_boost to be the sum some ratio of accented and the primary
+      * handle glide/legato if two notes overlap
+      *    * glide_range is 10, https://github.com/treisti/303duino/blob/master/_303/_303.ino#L204
+      * smooth the adcs with a running average
+          * (curr = new/16-oldest/16; append(val)), see CircularBuffer.h
+          * consider Arduino Zero fast 10b adc read
+      * Consider midi reads per diyelectromusic
+      * Consider small sequencer
+          * struct seq_note {int note, bool accent, octupdown -1,0,1, bool glide}
+          * seq_note seq_notes[16];
+          * easter egg of da funk 303 line
       * sub-osc: play constant sub-osc square -12
-      * sub-osc waveform selector and level
+      * sub-osc waveform selector and level, fm amount
       * add cc or knob to select lfo waveform, rate
-      * add cc or knob to do lfo send intensity/amount to pitch/OSC, cut, res, trem/VCA
+      * add mod/aft or cc or knob to do lfo send intensity/amount to pitch/OSC, cut, res, trem/VCA
+      * add cc or knob to do saturation: overdrive/distortion (per daft punk), wavefolder
+      * add cc or knob for VENV attack, decay sustain, release
+      * add cc or knob for noise wave, level
+      * add cc or knob for glide rate/speed
+      * add cc or knob for attack/snappy (add 808 blip or add noise transient p-b-d-t)
+      * Consider swap cut knob for button (mv cut to adc)
+          * tap for tempo, press+hold for menu, tap for generative pattern, press+hold for next 
+      * Is a super saw possible?
       * ...
 
 per some random internet post:
@@ -86,7 +131,8 @@ You can perform this tuning by either applying 3.0VDC to the VCO or finishing th
 #include <ResonantFilter.h>
 #include <mozzi_rand.h> // for rand()
 #include <mozzi_midi.h>
-#include <ADSR.h>
+#include <Smooth.h>
+#include "EnvADExp.h"  // copy of ~/Arduino/libraries/Mozzi/ADSR.h with exponential decay
 
 /* adc defines */
 #define RES_PIN 0
@@ -156,8 +202,8 @@ int tbd = 0;
 // ADSR <CONTROL_RATE, AUDIO_RATE> venv;
 // <x, y> where x is how often update() will be called and y is how often next()
 // so for this, put update into controlHool and next in audioHook
-ADSR <CONTROL_RATE, AUDIO_RATE> venv[NUM_OSCILS];
-ADSR <CONTROL_RATE, CONTROL_RATE> fenv[NUM_OSCILS];
+EnvelopeExponentialDecay <CONTROL_RATE, AUDIO_RATE> venv[NUM_OSCILS];
+EnvelopeExponentialDecay <CONTROL_RATE, CONTROL_RATE> fenv[NUM_OSCILS];
 // for now normal is 62.5%, accent base is 80%
 #define LVL_MIN 0
 // #define LVL_NORM 160
@@ -166,9 +212,16 @@ ADSR <CONTROL_RATE, CONTROL_RATE> fenv[NUM_OSCILS];
 #define LVL_MAX 255
 bool accent_on = false;
 int accent_level = LVL_NORM;
+int ao_min = 0;
+int ao_max = 0;
+float smoothness_max = 0.9975f;
+bool smoothness_on = false;
+Smooth <long> aSmoothGain(smoothness_max);
 
 
 #define DEBUG 1
+#define DEBUG_TBD_KNOB_NOTES 0  // turning TBD notes creates note events
+#define DEBUG_NOTE_EVENTS 0 // hide note events
 void debug_setup () {
   /* if debug off, we don't need serial */
   if (!DEBUG) {
@@ -388,7 +441,7 @@ void updateControl () {
   //     the lower it is, the accented decay cv is summed with the decay cv that went through the env mod
   //   on the 303 it is a double/stacked pot, 1 controls res, 2 compresses/smooths acc
   //   see https://www.firstpr.com.au/rwi/dfish/303-unique.html
-  //   called the "Accent Sweep Circuit" and the smoother curve adds a wah/wow to the note
+  //   called the "Accent Sweep Circuit" or "Wow Circuit" and the smoother curve adds a wah/wow to the note
   int res = adc_read(RES_PIN);
   //res = map(res, 0, 255, RES_MIN, RES_MAX);
   // if (DEBUG) { Serial.println(res); }
@@ -401,7 +454,7 @@ void updateControl () {
   //   env_mod has an effect on fenv and cut
   //   called the gimmick circuit in manual, increasing env_mod directly reduces cut
   //   this makes the center of the sweep the cut off keeping more in performance range
-  //   env_mod directly reduces fenv, and is summed with the accent fenv that comes through res c9
+  //   env_mod directly reduces fenv, and is summed with the accent fenv that comes through res c13
   // int env = ctrl_env_mod();  // nothing to directly set, only reads, ret 0..255
   int env = adc_read(ENVMOD_PIN);
   // env = map(env, 0, 255, x_MIN, x_MAX);
