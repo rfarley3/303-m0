@@ -301,7 +301,7 @@ void note_change (int osc_idx, int note) {
     return;
   }
   int freq = (int)mtof(note);
-  if (DEBUG) { Serial.print("Freq "); Serial.print(oscils_freq[osc_idx]); Serial.print(" -> "); Serial.println(freq); }
+  if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.print("Freq "); Serial.print(oscils_freq[osc_idx]); Serial.print(" -> "); Serial.println(freq); }
   oscils_freq[osc_idx] = freq;
   oscils_note[osc_idx] = note;
   oscils[osc_idx].setFreq(oscils_freq[osc_idx]);  // +- bend
@@ -319,7 +319,7 @@ bool trigger_env (int osc_idx) {
     //      then call stop_env and then trigger the env
     return false;
   }
-  if (DEBUG) { Serial.println("Triggering ENV ADSR"); }  
+  if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.println("Triggering VENV & FENV"); }  
   oscils_playing[osc_idx] = true;
   venv[osc_idx].noteOn();
   fenv[osc_idx].noteOn();
@@ -329,7 +329,7 @@ bool trigger_env (int osc_idx) {
 
 void stop_env (int osc_idx) {
   /* when no note pressed, switch to rel. with 0 sustain you get here if decay not finished, 303 rel is 0 anyways */
-  if (DEBUG) { Serial.println("Triggering VENV Rel (is currently playing but stopped)"); }
+  if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.println("Triggering VENV Rel (is currently playing but stopped)"); }
   // if (venv[0].playing()) {
   oscils_playing[osc_idx] = false;
   venv[osc_idx].noteOff();
@@ -385,21 +385,34 @@ void updateControl () {
   if (control_cnt > CONTROL_SUBRATE) {
     // these are controls that don't need to be responsive, reduce the I2C waits
     control_cnt = 0;
-    tbd_val = adc_read(TBD_PIN);
-    tbd_val = map(tbd_val, 0, 255, 0, 8);  
-    tbd_val = constrain(tbd_val, 0, 7); 
-    byte notes[] = { 48, 50, 51, 53, 55, 56, 58, 60 };
-    if (tbd_val != tbd) {
-      // for testing, this is c harmonic minor
-      HandleNoteOff(MIDI_CHANNEL, notes[tbd], LVL_NORM);
-      // for testing alternate accent
-      accent_on = !accent_on;
-      if (DEBUG) { Serial.print("Tbd "); Serial.print(tbd); Serial.print(" -> "); Serial.print(tbd_val); Serial.print(" a? "); Serial.println(accent_on); } 
-      tbd = tbd_val;
-      HandleNoteOn(MIDI_CHANNEL, notes[tbd_val], LVL_NORM);
+    if (DEBUG_TBD_KNOB_NOTES) {
+      tbd_val = adc_read(TBD_PIN);
+      tbd_val = map(tbd_val, 0, 255, 0, 8);  
+      tbd_val = constrain(tbd_val, 0, 7); 
+      byte notes[] = { 48, 50, 51, 53, 55, 56, 58, 60 };
+      if (tbd_val != tbd) {
+        // for testing, this is c harmonic minor
+        HandleNoteOff(MIDI_CHANNEL, notes[tbd], LVL_NORM);
+        // for testing alternate accent
+        accent_on = !accent_on;
+        if (DEBUG) { Serial.print("Tbd "); Serial.print(tbd); Serial.print(" -> "); Serial.print(tbd_val); Serial.print(" a? "); Serial.println(accent_on); } 
+        tbd = tbd_val;
+        HandleNoteOn(MIDI_CHANNEL, notes[tbd_val], LVL_NORM);
+      }
+      else if (venv[0].playing()) {
+        HandleNoteOff(MIDI_CHANNEL, notes[tbd], LVL_NORM);      
+      }
     }
-    else if (venv[0].playing()) {
-      HandleNoteOff(MIDI_CHANNEL, notes[tbd], LVL_NORM);      
+    else {
+      tbd_val = adc_read(TBD_PIN);
+      if (tbd_val != tbd) {
+        float smoothness = (float) tbd_val / 255.0;
+        if (smoothness > smoothness_max) {
+          smoothness = smoothness_max;
+        }
+        aSmoothGain.setSmoothness(smoothness);
+        tbd = tbd_val;
+      }
     }
     // freq = fn(note, tuning offset, glide, midi pitch bend)
     // wave = ratio of knob to number of options
@@ -433,6 +446,13 @@ void updateControl () {
   if (acc != accent) {
     if (DEBUG) { Serial.print("Acc "); Serial.print(accent); Serial.print(" -> "); Serial.println(acc); }
     accent = acc;
+    if (accent > 127) {
+      smoothness_on = true;
+      if (DEBUG) { Serial.println("Smoothness on"); }
+    }
+    else {
+      smoothness_on = false;
+    }
     // update_lpf = true;
   }
   // res = ratio of knob
