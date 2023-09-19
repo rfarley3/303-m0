@@ -1,6 +1,7 @@
 /*
- * ADSR.h
+ * EnvADExp.h
  *
+ * Modified 2023 rfarley3@github of ADSR.h from:
  * Copyright 2012 Tim Barrass.
  *
  * This file is part of Mozzi.
@@ -9,8 +10,8 @@
  *
  */
 
-#ifndef ADSR_H_
-#define ADSR_H_
+#ifndef ENVADEXP_H_
+#define ENVADEXP_H_
 
 #if ARDUINO >= 100
  #include "Arduino.h"
@@ -41,8 +42,34 @@ Template objects are messy when you try to use pointers to them,
 you have to include the whole template in the pointer handling.
 */
 
+/* 
+import numpy as np                                                                                                                                                                  
+y = np.linspace(0,255,256)
+y = (np.e**(np.log(255)/255))**y 
+y.round(0)
+ */
+const int linear_to_exponential[256] = {
+         0,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,  //  16
+         1,   1,   1,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,  //  32
+         2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   3,   3,   3,   3,   3,  //  48
+         3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   4,   4,   4,   4,   4,   4,  //  64
+         4,   4,   4,   4,   4,   4,   5,   5,   5,   5,   5,   5,   5,   5,   5,   6,  //  80
+         6,   6,   6,   6,   6,   6,   6,   7,   7,   7,   7,   7,   7,   8,   8,   8,  //  96
+         8,   8,   8,   9,   9,   9,   9,   9,  10,  10,  10,  10,  10,  11,  11,  11,  // 112
+        11,  12,  12,  12,  12,  13,  13,  13,  14,  14,  14,  14,  15,  15,  15,  16,  // 128
+        16,  16,  17,  17,  18,  18,  18,  19,  19,  20,  20,  21,  21,  21,  22,  22,  // 144
+        23,  23,  24,  24,  25,  25,  26,  27,  27,  28,  28,  29,  30,  30,  31,  32,  // 160  // [50] == 26 == 10% point
+        32,  33,  34,  35,  35,  36,  37,  38,  39,  39,  40,  41,  42,  43,  44,  45,  // 176
+        46,  47,  48,  49,  50,  51,  52,  53,  55,  56,  57,  58,  59,  61,  62,  63,  // 192
+        65,  66,  68,  69,  71,  72,  74,  76,  77,  79,  81,  82,  84,  86,  88,  90,  // 208
+        92,  94,  96,  98, 100, 102, 105, 107, 109, 112, 114, 117, 119, 122, 124, 127,  // 224
+       130, 133, 136, 139, 142, 145, 148, 151, 155, 158, 162, 165, 169, 172, 176, 180,  // 240
+       184, 188, 192, 196, 201, 205, 210, 214, 219, 224, 229, 234, 239, 244, 250, 255   // 256
+};
+
+
 template <unsigned int CONTROL_UPDATE_RATE, unsigned int LERP_RATE, typename T = unsigned int>
-class ADSR
+class EnvelopeExponentialDecay
 {
 private:
 
@@ -112,7 +139,7 @@ public:
 
 	/** Constructor.
 	 */
-	ADSR():LERPS_PER_CONTROL(LERP_RATE/CONTROL_UPDATE_RATE)
+	ADSRExp():LERPS_PER_CONTROL(LERP_RATE/CONTROL_UPDATE_RATE)
 	{
 		attack.phase_type = ATTACK;
 		decay.phase_type = DECAY;
@@ -138,16 +165,17 @@ public:
 			break;
 
 		case DECAY:
-			checkForAndSetNextPhase(&sustain);
+      checkForAndSetNextPhase(&idle);
+			//checkForAndSetNextPhase(&sustain);
 			break;
 
-		case SUSTAIN:
-			checkForAndSetNextPhase(&release);
-			break;
-
-		case RELEASE:
-			checkForAndSetNextPhase(&idle);
-			break;
+//		case SUSTAIN:
+//			checkForAndSetNextPhase(&release);
+//			break;
+//
+//		case RELEASE:
+//			checkForAndSetNextPhase(&idle);
+//			break;
 
 		case IDLE:
 			adsr_playing = false;
@@ -162,10 +190,13 @@ public:
 	@return the next value, as an unsigned char.
 	 */
 	inline
-	unsigned char next()
+	unsigned char next()//int scalar8b=-1)
 	{
 		unsigned char out = 0;
-		if (adsr_playing) out = Q15n16_to_Q8n0(transition.next());
+		if (!adsr_playing) return out;
+		out = Q15n16_to_Q8n0(transition.next());
+    if (current_phase->phase_type == DECAY) out = linear_to_exponential[out];
+    //if (scalar8b >= 0) out = (out * scalar8b) >> 8;
 		return out;
 	}
 
@@ -190,10 +221,33 @@ public:
 	*/
 	inline
 	void noteOff(){
-		setPhase(&release);
+		// setPhase(&release);
 	}
 
+  inline
+  bool checkForAttack() {
+    return (current_phase->phase_type == ATTACK);
+  }
 
+  inline
+  bool checkForDecay() {
+    return (current_phase->phase_type == DECAY);
+  }
+
+  inline
+  bool checkForRelease() {
+    return (current_phase->phase_type == RELEASE);
+  }
+
+  inline
+  bool checkForSustain() {
+    return (current_phase->phase_type == SUSTAIN);
+  }
+
+  inline
+  int getPhase() {
+    return current_phase->phase_type;
+  }
 
 	/** Set the attack level of the ADSR.
 	@param value the attack level.
@@ -441,4 +495,4 @@ bool adsr_playing;
 This is an example of how to use the ADSR class.
 */
 
-#endif /* ADSR_H_ */
+#endif /* ADSREXP_H_ */
