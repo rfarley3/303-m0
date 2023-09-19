@@ -319,7 +319,7 @@ bool trigger_env (int osc_idx) {
     //      then call stop_env and then trigger the env
     return false;
   }
-  if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.println("Triggering VENV & FENV"); }  
+  if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.println("Triggering VENV & FENV"); }
   oscils_playing[osc_idx] = true;
   venv[osc_idx].noteOn();
   fenv[osc_idx].noteOn();
@@ -560,15 +560,15 @@ AudioOutput_t updateAudio () {
    *       out = buf0 - buf1; // BandPass
    *       out = in - buf0 + buf1; // Notch
    */
-  int32_t vca_exp = lin_to_exp[venv[0].next()];  // 0..255 -> exp(0..255)
-  // TODO boost if accent_on
   // int8_t osc.next -128-127
   // int9   lpf.next -256-255  // TODO verify
-  int32_t audio_out = lpf.next(oscils[0].next());  // AudioOutputStorage_t is an int
-  // trusting a comment in MultiResonantFilter example::86 to allow 1 bit for resonance
-  // filtered_osc should be <=9b
-  // now scale for vca, use x*y>>8 which will need 8+9=17b
-  audio_out = (vca_exp * audio_out) >> 8;
+  int32_t audio_out = oscils[0].next();  // AudioOutputStorage_t is an int
+  audio_out = lpf.next(audio_out);
+  audio_out = soft_clip(audio_out);
+  // TODO Remove, sanity check to make sure we are no longer actually clipping
+  // audio_out = audio_out >> 1; // works with res<=240. try >>0, what is max res before clipping?
+  // env_mod 0, res >240, cut < ? (lower end) gives about +-4500 or 3 bits overflow
+  // TODO use tube-ish compression and reserve last 10% for log(x bit of overflow)
   if (audio_out < -512) {  // (-(AudioOutputStorage_t) AUDIO_BIAS)
     if (DEBUG) {
       Serial.print("Clipping - "); Serial.print(audio_out);
@@ -589,6 +589,13 @@ AudioOutput_t updateAudio () {
     }
     audio_out = 511;
   }
+  // trusting a comment in MultiResonantFilter example::86 to allow 1 bit for resonance
+  // filtered_osc should be <=9b
+  // now scale for vca, use x*y>>8 which will need 8+9=17b
+  int32_t vca_exp = lin_to_exp[venv[0].next()];  // 0..255 -> exp(0..255)
+  // TODO boost if accent_on
+  // if (smoothness_on && tbd > 0) { vca_exp = aSmoothGain.next(vca_exp); }  // will this fix click?
+  audio_out = (vca_exp * audio_out) >> 8;
   // For reasons, allow 1 bit of headroom to bring us to 10 bits, which is perfect for the SAMD21 DAC
   // a bit of a hack, but let's clip this thing at 10b. see ::55 at https://sensorium.github.io/Mozzi/doc/html/_audio_output_8h_source.html
   // #define CLIP_AUDIO(x) constrain((x), (-(AudioOutputStorage_t) AUDIO_BIAS), (AudioOutputStorage_t) AUDIO_BIAS-1)
