@@ -1,7 +1,7 @@
 #ifndef synth303_ino
 #define synth303_ino
 /*  Create a 303-ish synth with potentiometer controllers.
- *  (c) Ryan Farley ryanjfarley@gmail.com rfarley3@github
+ *  (c) Ryan Farley rfarley3@github
  *  
  *  when you load the project in Arduino
  *  * install Mozzi, MIDI
@@ -342,6 +342,21 @@ import numpy as np
 y = np.linspace(0,255,256)
 y = (np.e**(np.log(255)/255))**y 
 y.round(0)
+
+Exponentially increasing look up table
+         *
+         *
+        **
+      ***
+    ***
+*****
+log(x) = 255-lin_to_exp[255-x]
+     *****
+   ***
+ ***
+**
+*
+*
  */
 const int lin_to_exp[256] = {
          0,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,  //  16

@@ -1,7 +1,7 @@
 /*
  * EnvADExp.h
  *
- * Modified 2023 rfarley3@github of ADSR.h from:
+ * Modified 2023 rfarley3@github. Original was ADSR.h from:
  * Copyright 2012 Tim Barrass.
  *
  * This file is part of Mozzi.
@@ -47,6 +47,15 @@ import numpy as np
 y = np.linspace(0,255,256)
 y = (np.e**(np.log(255)/255))**y 
 y.round(0)
+
+Exponential. Can be used for increasing or decreasing.
+Use linear (Line) y value as the index to get the exponential conversion
+         *      *
+         *      *
+        **      **
+      ***        ***
+    ***            ***
+*****                *****
  */
 const int linear_to_exponential[256] = {
          0,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,  //  16

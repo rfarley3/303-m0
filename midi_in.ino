@@ -1,7 +1,7 @@
 #ifndef synth303_midi_ino
 #define synth303_midi_ino
 /*  Create a 303-ish synth with potentiometer controllers.
- *  (c) Ryan Farley ryanjfarley@gmail.com rfarley3@github
+ *  (c) Ryan Farley rfarley3@github
  */
 #include <MIDI.h>
 

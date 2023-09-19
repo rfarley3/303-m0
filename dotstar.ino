@@ -1,7 +1,7 @@
 #ifndef synth303_dot_ino
 #define synth303_dot_ino
 /*  Create a 303-ish synth with potentiometer controllers.
- *  (c) Ryan Farley ryanjfarley@gmail.com rfarley3@github
+ *  (c) Ryan Farley rfarley3@github
 */
 #ifdef ADAFRUIT_TRINKET_M0
 // setup Dotstar LED on Trinket M0
