@@ -9,13 +9,18 @@
 
     Mozzi documentation/API
     https://sensorium.github.io/Mozzi/doc/html/index.html
-    Many ideas and circuits taken from this series:
+    https://sensorium.github.io/Mozzi/learn/under-the-hood/
     https://diyelectromusic.wordpress.com/2021/03/20/trinket-fm-synthesis-with-mozzi/
     https://diyelectromusic.wordpress.com/2021/02/15/midi-in-for-3-3v-microcontrollers/
     https://diyelectromusic.wordpress.com/2021/05/29/midi-connections-cheat-sheet/
     https://github.com/diyelectromusic/sdemp/blob/main/src/SDEMP/TrinketUSBMIDIMultiPotMozziSynth3/TrinketUSBMIDIMultiPotMozziSynth3.ino
     ^^ shows USB host mode
-    
+
+    303 Circuit and manual
+    * http://machines.hyperreal.org/manufacturers/Roland/TB-303/schematics/roland.TB-303.schem-5.gif
+    * https://www.firstpr.com.au/rwi/dfish/303-unique.html
+    * http://machines.hyperreal.org/manufacturers/Roland/TB-303/schematics/roland.TB-303.schem-8.gif
+    * 
     Circuit with Adafruit Trinket M0
     * pin 1 (DAC 10b) audio output 
       * 1k Ohm with (1k Ohm voltage divider (halving 3.3 -> 1.625) & 10 uF coupling capacitor (biasing as AC += .8v))
@@ -35,11 +40,8 @@
       *   A7 TBD
    
     TODO
-    * add Serial.read to send notes over TTY and not need keyboard for testing
-    * SAMD21 ADC bug
     * zombie osc_playing, is this an issue?
     * test accent on everyother, add math for VENV boost
-    * test accent to dcy shortening
     * work math for env_mod to cut
     *   w/o accent: reduce cut by env_mod, then pluck it up to the amount it was reduced to (cut is lower and pluck is centered on actual cut)
     *   w   accent: reduce cut by env_mod, make a second dcy that is reduced by accent minus a diode and reduced?smoothed?what? by res
@@ -308,6 +310,12 @@ const int lin_to_exp[256] = {
 };
 
 
+int lin_to_log(int lin_val) {
+  // assumes lin is 0..255
+  int log_val = 255 - lin_to_exp[255 - lin_val];
+  return log_val;
+}
+
 void updateControl () {
   /* Mozzi calls this every CONTROL_RATE, keep as fast as possible as it will hold up AUDIO_RATE calls
    *  for wave forms (like oscil, env shapes), call .update() per CONTROL_RATE and .next() per AUDIO_RATE in audioHook()
@@ -486,11 +494,23 @@ AudioOutput_t updateAudio () {
   // now scale for vca, use x*y>>8 which will need 8+9=17b
   audio_out = (vca_exp * audio_out) >> 8;
   if (audio_out < -512) {  // (-(AudioOutputStorage_t) AUDIO_BIAS)
-    if (DEBUG) { Serial.print("Clipping - "); Serial.println(audio_out); }
+    if (DEBUG) {
+      Serial.print("Clipping - "); Serial.print(audio_out);
+      if (audio_out < ao_min) {
+        ao_min = audio_out;
+      }
+      Serial.print(" "); Serial.println(ao_min);
+    }
     audio_out = -512;
   }
   else if (audio_out > 511) {  // (AudioOutputStorage_t) AUDIO_BIAS-1
-    if (DEBUG) { Serial.print("Clipping + "); Serial.println(audio_out); }
+    if (DEBUG) {
+      Serial.print("Clipping + "); Serial.print(audio_out);
+      if (audio_out> ao_max) {
+        ao_max = audio_out;
+      }
+      Serial.print(" "); Serial.println(ao_max);
+    }
     audio_out = 511;
   }
   // For reasons, allow 1 bit of headroom to bring us to 10 bits, which is perfect for the SAMD21 DAC
