@@ -1,3 +1,5 @@
+#ifndef synth303_adc_ino
+#define synth303_adc_ino
 /*  Create a 303-ish synth with potentiometer controllers.
  *  (c) Ryan Farley ryanjfarley@gmail.com rfarley3@github
 */
@@ -141,3 +143,5 @@ uint8_t adc_read_cmd(uint8_t ain_idx) {
   // write (i2c, &cmd, 1);
   return cmd;
 }
+
+#endif

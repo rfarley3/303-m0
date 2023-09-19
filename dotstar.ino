@@ -1,3 +1,5 @@
+#ifndef synth303_dot_ino
+#define synth303_dot_ino
 /*  Create a 303-ish synth with potentiometer controllers.
  *  (c) Ryan Farley ryanjfarley@gmail.com rfarley3@github
 */
@@ -49,3 +51,5 @@ void rainbow(long firstPixelHue) {
   }
   strip.show(); // Update strip with new contents
 }
+
+#endif

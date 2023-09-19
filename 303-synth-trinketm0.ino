@@ -1,3 +1,5 @@
+#ifndef synth303_ino
+#define synth303_ino
 /*  Create a 303-ish synth with potentiometer controllers.
  *  (c) Ryan Farley ryanjfarley@gmail.com rfarley3@github
  *  
@@ -496,3 +498,33 @@ AudioOutput_t updateAudio () {
   // #define CLIP_AUDIO(x) constrain((x), (-(AudioOutputStorage_t) AUDIO_BIAS), (AudioOutputStorage_t) AUDIO_BIAS-1)
   return MonoOutput::fromNBit(10, audio_out);
 }
+
+
+int soft_clip(int sample) {
+  // AudioOutputStorage_t is an int
+  const int max_val = 512;  // M0 DAC is signed 10b, so -512..511
+  const int needs_compression = max_val - 64;  // let's use the 4 LSB to compress the 4 MSB into
+  int tmp_audio_out = abs(sample);
+  if (tmp_audio_out > needs_compression) {
+    tmp_audio_out = tmp_audio_out - needs_compression;  // bias to 0
+    // in observation, max/min was 8k once, 4k a number of times, 2k frequently, 1k-500 most often
+    tmp_audio_out = constrain(tmp_audio_out, 0, 4095);  // hard clip for the rare case >= 4096
+    // use a log function to squeeze 488..4095 into 0..64 and then add that to needs_compression
+    // should give rounded shoulders, akin to tube compression, or at least better than hard clipping
+    // get the 0..4095 into 0..255 and then use the exp table as a log table
+    tmp_audio_out = tmp_audio_out >> 4;
+    int compressed_bits = lin_to_log(tmp_audio_out);
+    // now get it to fit into 0..63
+    compressed_bits = compressed_bits >> 2;
+    // finally store the result signed
+    if (sample < 0) {
+      sample = (-1 * needs_compression) - compressed_bits;  // -(512-64)-{0..63} 
+    }
+    else {
+      sample = needs_compression + compressed_bits;  // (512-64)+{0..63}
+    }
+  }
+  return sample;
+}
+
+#endif
