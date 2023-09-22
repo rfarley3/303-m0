@@ -502,7 +502,7 @@ void updateControl () {
   //   see https://www.firstpr.com.au/rwi/dfish/303-unique.html
   //   called the "Accent Sweep Circuit" or "Wow Circuit" and the smoother curve adds a wah/wow to the note
   int res = adc_read(RES_PIN);
-  //res = map(res, 0, 255, RES_MIN, RES_MAX);
+  res = map(res, 0, 255, RES_MIN, RES_MAX);
   // if (DEBUG) { Serial.println(res); }
   if (res != resonance) {
     if (DEBUG) { Serial.print("Res "); Serial.print(resonance); Serial.print(" -> "); Serial.println(res); }
@@ -543,16 +543,18 @@ void updateControl () {
   int fenv_level = (fenv[0].next() * env_mod) >> 8;  // use env_mod as a % on fenv and preserve 8b
   // fenv_level = lin_to_exp[fenv_level];  // scale to be exponential decay
   // make a temp cut reduced by env_mod
-  int tmp_cutoff = (cutoff * (255 - env_mod)) >> 8;  // reduce cutoff as % of inverse of env_mod
+  int tmp_cutoff = cutoff - (((cutoff - CUT_MIN) * env_mod) >> 8);
+  // int tmp_cutoff = CUT_MIN + (((cutoff - CUT_MIN) * (255 - env_mod)) >> 8);  // reduce cutoff as % of inverse of env_mod
   // find the headroom above the temp cut, then use fenv as a % against that
   int fenv_boost = ((CUT_MAX - tmp_cutoff) * fenv_level) >> 8;  // and preserve 8b
-  tmp_cutoff = tmp_cutoff + fenv_boost;
+  tmp_cutoff = tmp_cutoff + fenv_boost;  // should be max of 255
   // avoid aliasing due to integer overflow, this is like hard clipping, could benefit from compression-like alg, or assurances against int overflow
-  tmp_cutoff = constrain(tmp_cutoff, 0, 255);
+  tmp_cutoff = constrain(tmp_cutoff, CUT_MIN, CUT_MAX);
   // if update_lpf { and if nothing is playing then don't do the cutoff calcs
   // might as well call this if anything changes, so there isn't the risk of a cut/res jump if a ctrl lags after a noteOn
   // to avoid some distortion it may be worth reducing resonance to ~240 when cutoff < 20
   lpf.setCutoffFreqAndResonance(tmp_cutoff, resonance);
+  hpf.setCutoffFreqAndResonance(FIXED_LOW_CUT, resonance);
   // float venv_accent_boost = acc_pot_to_gain_val[acc];  // ret 1..(LVL_MAX/LVL_NORM)
   // venv(atk=3 msec, dcy=5000) * acc%*(LVL_MAX/LVL_NORM)
   // in audio: venv.next()*venv_accent_boost
