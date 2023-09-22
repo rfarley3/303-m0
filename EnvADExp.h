@@ -148,7 +148,7 @@ public:
 
 	/** Constructor.
 	 */
-	ADSRExp():LERPS_PER_CONTROL(LERP_RATE/CONTROL_UPDATE_RATE)
+	EnvelopeExponentialDecay():LERPS_PER_CONTROL(LERP_RATE/CONTROL_UPDATE_RATE)
 	{
 		attack.phase_type = ATTACK;
 		decay.phase_type = DECAY;
