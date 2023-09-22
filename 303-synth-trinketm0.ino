@@ -28,25 +28,30 @@
     * pin 0 to I2C SDA
     * pin 2 to I2C SCL
     * pin 3 (RX) from MIDI
-    * pin 4 (ADC 12b) from 10k pot for filter cut freq
+    * // pin 4 (ADC 12b) from 10k pot for filter cut freq
+    * pin 4 momentary NO switch for input
     * ADC (ADS7830 8 chan 8b) addr x4b
-      * Y A0 res
-      * Y A1 wave
-      * Y A2 env mod
+      * Y A0 cut
+      * Y A1 res
+      * Y A2 env_mod
       * Y A3 decay
       *   A4 accent
-      *   A5 trig (temporary for not needing keyboard)
-      *   A6 TBD
-      *   A7 TBD
-   
-    TODO
-    * zombie osc_playing, is this an issue?
-    * test accent on everyother, add math for VENV boost
-    * work math for env_mod to cut
-    *   w/o accent: reduce cut by env_mod, then pluck it up to the amount it was reduced to (cut is lower and pluck is centered on actual cut)
-    *   w   accent: reduce cut by env_mod, make a second dcy that is reduced by accent minus a diode and reduced?smoothed?what? by res
+      *   A5 wave trig
+      *   A6 (temporary for not needing keyboard, hold for cut after putting momentary button on onboard pin 4)
+      *   A7 Button selectable
+      *   TBD candidates:
+          * Some sort of wave shaping to make playability cover more types of music  
+          * Glide {on-rate}
+          * Snappy {attack transient bpdt}{expoential decay rate}
+          * Saturation {distortion, overdrive, wavefolder}
+          * LFO {wave, rate, send-to (>) attenuator, >pitch, >flt-cut, >vca/trem, >flt-res, >pwm}
+          * Sub {wave, rel-note, detune, level, >fm amt}
+          * Noise {wave, level}
+          * Not VENV Attack, Sustain, Release as that'd be too not 303
+          * Kick vol
+          * Snare/hats vol
 
-    Version road map:
+    Version road map/TODO:
       * Y verify turns on, use dotstar
       * Y dac: play tone and test speaker/line out
       * Y cut pot: respond to cut adjust, no other effects from knob
@@ -70,15 +75,24 @@
           * Y adjusts cut lower as env_mod increased (Gimmick circuit per manual)
               * Y allows filter sweep even with cut is max
               * Y allows sweep to move through (above/at/below) cut freq instead of only above it
-      * Y fix lpf integer overflow
-      * 
-      * Are all OSC in tune? 
-    wave_saw.setFreq(freq * (float) SAW8192_SAMPLERATE / (float) SAW8192_NUM_CELLS);
-  lpf.setCutoffFreq((amt * env.get() + (1.0 - amt)) * cutoff * 150); (weighted fenv + weighted inverse cut) *150 (must be the max they used for cut)
-      * HERE fix VENV clicking
-      *     maybe VENV level should be 255 and then in update audio scaled down if not accent? for consistency? in case the spike is due to level being NORM but exp expecting MAX?
-      *       where is it coming fomr?
-      *       best best if vca attack, smoothing helped, but is there a better way? try no serial? no midi? is it a clock/speed issue?)
+      * Y fix lpf integer overflow by using consistent 0..255 and then soft_clip function for tube-ish compression
+      * Are all OSC in tune?
+          * Notice this method for setting freq wave_saw.setFreq(freq * (float) SAW8192_SAMPLERATE / (float) SAW8192_NUM_CELLS); 
+      * Add notch to remove any aliasing harmonics due to AUDIO_RATE or CONTROL_RATE
+      * Y Fix VENV clicking by adding star grounding and grouping digital ground
+          * ADC adds lots of digital noise to ground, and when volume turned down LM386's input is exposed to it
+          * MIDI is causing lots of power fluctuations and they are also showing in ground
+          * Shows up as a click on key press, or grown/growl/buzz on CC knob turn/aftertouch/mod/bend
+      * Y Hidden HPF 
+          * https://www.timstinchcombe.co.uk/index.php?pge=diode2
+          * LPF->HPF
+          * res increases with LPF resonance 
+          * cut is fixed at ~10 Hz
+          * Changes the wave shapes tri looks like sq with hump or tri on top (like the 303 sq) and sq looks like squiggly tri (like 303 tri)
+          * https://olney.ai/ct-modular-book/tb-303.html
+      * decay rate seems too fast for fenv
+          * Notice this method   lpf.setCutoffFreq((amt * env.get() + (1.0 - amt)) * cutoff * 150); (weighted fenv + weighted inverse cut) *150 (must be the max they used for cut)
+          * I think the exp decay is too aggressive 1) try inferring longer time such that 10% remain at t (per manual) 2) use a gentler curve
       * add vel threshold from noteon as accented
           * alternate any input as accented or not
           * add cc to turn it on and off
@@ -88,9 +102,11 @@
             * Reduced by accent knob
             * Constant value reduction from a diode
             * Smooth it more as res increases
+              * If on a new note, the FENV decay != 0, then add that remainder to next FENV (wavey-steps increasing per remainder, drives cut higher and higher on fast repeat notes)
             * adapt fenv_boost to be the sum some ratio of accented and the primary
       * handle glide/legato if two notes overlap
-      *    * glide_range is 10, https://github.com/treisti/303duino/blob/master/_303/_303.ino#L204
+           * glide_range is 10, https://github.com/treisti/303duino/blob/master/_303/_303.ino#L204
+      * Do audio comparison tests against well known 303 sequences with glides, octaves, accent, etc
       * smooth the adcs with a running average
           * (curr = new/16-oldest/16; append(val)), see CircularBuffer.h
           * consider Arduino Zero fast 10b adc read
@@ -135,16 +151,16 @@ You can perform this tuning by either applying 3.0VDC to the VCO or finishing th
 #include "EnvADExp.h"  // copy of ~/Arduino/libraries/Mozzi/ADSR.h with exponential decay
 
 /* adc defines */
-#define RES_PIN 0
-#define OSC0WAVT_PIN 1
-#define DCY_PIN 2
+#define CUT_PIN 5
+#define RES_PIN 4
 #define ENVMOD_PIN 3
-#define ACC_PIN 4
-#define TBD_PIN 5
-// 6
-// 7
-// will be redirected to on-board_adc or pin 4
-#define CUT_PIN 8
+#define DCY_PIN 6
+#define ACC_PIN 7
+#define OSC0WAVT_PIN 0
+#define TBD_PIN 1  // for testing emit note on events alternating accent
+// 2 MOMENTARY_PIN rotates what this can change
+// pin 8 via ADC will be redirected to on-board_adc or pin 4
+#define MOMENTARY_PIN 4  // TODO double clicking this rotates through what a knob can set, hold to set that setting
 
 /* midi defines */
 // #define MIDI_CHANNEL MIDI_CHANNEL_OMNI  // means all channels
@@ -220,8 +236,12 @@ Smooth <long> aSmoothGain(smoothness_max);
 
 
 #define DEBUG 1
-#define DEBUG_TBD_KNOB_NOTES 0  // turning TBD notes creates note events
+#define DEBUG_TBD_KNOB_NOTES 1  // turning TBD notes creates note events
 #define DEBUG_NOTE_EVENTS 0 // hide note events
+#define DEBUG_DISABLE_FENV 0  // same as disable LPF & HPF
+#define DEBUG_DISABLE_LPF 0
+#define DEBUG_DISABLE_HPF 0
+#define DEBUG_DISABLE_VENV 0
 void debug_setup () {
   /* if debug off, we don't need serial */
   if (!DEBUG) {
@@ -502,8 +522,9 @@ void updateControl () {
   // if  accent_on: cut = cut + smooth_via_c13(res, fenv*acc%)
   //                res 0% is fenv/acc. res 100% smooth(fenv*acc%)
   //                see https://www.firstpr.com.au/rwi/dfish/303-unique.html
-  int cut_value = lin_to_exp[adc_read(CUT_PIN)];  // convert to exp (less change per step at lower values; more at higher; for more intuitive knob turning)
-  // int cut_freq = map(cut_value, 0, 255, CUT_MIN, CUT_MAX);
+  // int cut_value = lin_to_exp[adc_read(CUT_PIN)];  // convert to exp (less change per step at lower values; more at higher; for more intuitive knob turning)
+  int cut_value = adc_read(CUT_PIN);
+  cut_value = map(cut_value, 0, 255, CUT_MIN, CUT_MAX);
   // mozziAnalogRead value is 0-1023 AVR, 0-4095 on STM32; set with analogReadResolution in setup
   // note that this has been reduced to 8b until testing complete, so cut_value=0..255
   if (cut_value != cutoff) {
@@ -610,7 +631,7 @@ AudioOutput_t updateAudio () {
   int32_t vca_exp = lin_to_exp[venv[0].next()];  // 0..255 -> exp(0..255)
   // TODO boost if accent_on
   // if (smoothness_on && tbd > 0) { vca_exp = aSmoothGain.next(vca_exp); }  // will this fix click?
-  audio_out = (vca_exp * audio_out) >> 8;
+  if (!DEBUG_DISABLE_VENV) { audio_out = (vca_exp * audio_out) >> 8; }
   // For reasons, allow 1 bit of headroom to bring us to 10 bits, which is perfect for the SAMD21 DAC
   // a bit of a hack, but let's clip this thing at 10b. see ::55 at https://sensorium.github.io/Mozzi/doc/html/_audio_output_8h_source.html
   // #define CLIP_AUDIO(x) constrain((x), (-(AudioOutputStorage_t) AUDIO_BIAS), (AudioOutputStorage_t) AUDIO_BIAS-1)
