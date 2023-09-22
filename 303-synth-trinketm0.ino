@@ -190,17 +190,19 @@ int osc0_wavt_cnt = 4;  // count of the switch statement options
 //];
 
 LowPassFilter lpf;  // can be changed to HighPassFilter, BandPassFilter or NotchFilter
+ResonantFilter <HIGHPASS> hpf;
 // cut 0-255 to represent 0-8192 Hz
 // res 0-255, with 255 as max res
 
 // StateVariable <LOWPASS> svf; // can be LOWPASS, BANDPASS, HIGHPASS or NOTCH
 // svf freq range is 20 Hz to AUDIO_RATE/4 (32k/4 = 8192)
-#define CUT_MIN 0
+#define CUT_MIN 3
 const int CUT_MAX = 255;
 int cutoff = CUT_MAX;
 #define RES_MIN 0
-const int RES_MAX = 255;
+const int RES_MAX = 240; // 255;
 int resonance = RES_MIN;
+#define FIXED_LOW_CUT 2  // of whatever 10 Hz may be for a res peak in the low end
 
 
 // with accent off, these are the time for exponential decay to 10%
@@ -224,8 +226,8 @@ EnvelopeExponentialDecay <CONTROL_RATE, CONTROL_RATE> fenv[NUM_OSCILS];
 #define LVL_MIN 0
 // #define LVL_NORM 160
 // #define LVL_ACC 208
-#define LVL_NORM 208
-#define LVL_MAX 255
+#define LVL_NORM 160
+#define LVL_MAX 208
 bool accent_on = false;
 int accent_level = LVL_NORM;
 int ao_min = 0;
@@ -278,9 +280,11 @@ void mozzi_setup () {
   // svf.setResonance(resonance);
   // svf.setCentreFreq(cutoff);
   lpf.setCutoffFreqAndResonance(cutoff, resonance);
-  venv[0].setADLevels(accent_level, 0);  // att, dcy; 0-255. 
-  //venv[0].setTimes(50,200,10000,200); // testing long note
+  hpf.setCutoffFreqAndResonance(FIXED_LOW_CUT, resonance);
+  // VENV
+  venv[0].setADLevels(LVL_NORM, 0);//accent_level, 0);  // att, dcy; 0-255. 
   venv[0].setTimes(3, 10000, 0, 0); // 303 VENV is constant, accent changes levels
+  // FENV
   fenv[0].setADLevels(255, 0);  // 303 FENV level changed by env mod, or if accent, then fn of accent, res, and env mod
   fenv[0].setTimes(3, 2500, 0, 0); // 303 FENV delay changes with knob, levels change as function of env mod or accent, res
   startMozzi(CONTROL_RATE); // :)
@@ -599,8 +603,16 @@ AudioOutput_t updateAudio () {
   // int8_t osc.next -128-127
   // int9   lpf.next -256-255  // TODO verify
   int32_t audio_out = oscils[0].next();  // AudioOutputStorage_t is an int
-  audio_out = lpf.next(audio_out);
-  audio_out = soft_clip(audio_out);
+  if (!DEBUG_DISABLE_FENV) {
+    if (!DEBUG_DISABLE_LPF) {
+      audio_out = lpf.next(audio_out);
+      audio_out = soft_clip(audio_out);
+    }
+    if (!DEBUG_DISABLE_HPF) {
+      audio_out = hpf.next(audio_out);
+      audio_out = soft_clip(audio_out);
+    }
+  }
   // TODO Remove, sanity check to make sure we are no longer actually clipping
   // audio_out = audio_out >> 1; // works with res<=240. try >>0, what is max res before clipping?
   // env_mod 0, res >240, cut < ? (lower end) gives about +-4500 or 3 bits overflow
