@@ -80,9 +80,12 @@
           * Notice this method for setting freq wave_saw.setFreq(freq * (float) SAW8192_SAMPLERATE / (float) SAW8192_NUM_CELLS); 
       * Add notch to remove any aliasing harmonics due to AUDIO_RATE or CONTROL_RATE
       * Y Fix VENV clicking by adding star grounding and grouping digital ground
-          * ADC adds lots of digital noise to ground, and when volume turned down LM386's input is exposed to it
-          * MIDI is causing lots of power fluctuations and they are also showing in ground
-          * Shows up as a click on key press, or grown/growl/buzz on CC knob turn/aftertouch/mod/bend
+          * Y ADC adds lots of digital noise to ground, and when volume turned down LM386's input is exposed to it
+          * Y MIDI is causing lots of power fluctuations and they are also showing in ground
+          * Y Shows up as a click on key press, or grown/growl/buzz on CC knob turn/aftertouch/mod/bend
+          * Y For certain waves, the VENV attack is louds (namely sine/triangle)---but fix the 10% at t per FENV rate too
+              * really long attack, like 1000 shows that the switch to decay is the pop
+              * Y move from exp of e, to 1.1ish (or 1.01) for softer decay. keep adsr always 0..255 and scale in this
       * Y Hidden HPF 
           * https://www.timstinchcombe.co.uk/index.php?pge=diode2
           * LPF->HPF
@@ -91,6 +94,7 @@
           * Changes the wave shapes tri looks like sq with hump or tri on top (like the 303 sq) and sq looks like squiggly tri (like 303 tri)
           * https://olney.ai/ct-modular-book/tb-303.html
       * decay rate seems too fast for fenv
+  HERE    * May have been fixed by new decay curve for VENV
           * Notice this method   lpf.setCutoffFreq((amt * env.get() + (1.0 - amt)) * cutoff * 150); (weighted fenv + weighted inverse cut) *150 (must be the max they used for cut)
           * I think the exp decay is too aggressive 1) try inferring longer time such that 10% remain at t (per manual) 2) use a gentler curve
       * add vel threshold from noteon as accented
@@ -224,9 +228,7 @@ EnvelopeExponentialDecay <CONTROL_RATE, AUDIO_RATE> venv[NUM_OSCILS];
 EnvelopeExponentialDecay <CONTROL_RATE, CONTROL_RATE> fenv[NUM_OSCILS];
 // for now normal is 62.5%, accent base is 80%
 #define LVL_MIN 0
-// #define LVL_NORM 160
-// #define LVL_ACC 208
-#define LVL_NORM 160
+#define LVL_NORM 160  // unaccented
 #define LVL_MAX 208
 bool accent_on = false;
 int accent_level = LVL_NORM;
@@ -282,7 +284,10 @@ void mozzi_setup () {
   lpf.setCutoffFreqAndResonance(cutoff, resonance);
   hpf.setCutoffFreqAndResonance(FIXED_LOW_CUT, resonance);
   // VENV
-  venv[0].setADLevels(LVL_NORM, 0);//accent_level, 0);  // att, dcy; 0-255. 
+  venv[0].setADLevels(255, 0);//accent_level, 0);  // att, dcy; 0-255. 
+  // FENV has 3 msec attack per manual, too clicky for VENV or the LERP alg
+  // turns out it was on exp attack, so fixed that, but still too clicky
+  // tried 0 (did not fix it), 3 (orig), 10 (better, but not for sine/tri), 100 (good for sine/triage, but very long)
   venv[0].setTimes(3, 10000, 0, 0); // 303 VENV is constant, accent changes levels
   // FENV
   fenv[0].setADLevels(255, 0);  // 303 FENV level changed by env mod, or if accent, then fn of accent, res, and env mod
@@ -642,10 +647,18 @@ AudioOutput_t updateAudio () {
   // trusting a comment in MultiResonantFilter example::86 to allow 1 bit for resonance
   // filtered_osc should be <=9b
   // now scale for vca, use x*y>>8 which will need 8+9=17b
-  int32_t vca_exp = lin_to_exp[venv[0].next()];  // 0..255 -> exp(0..255)
+  // int32_t vca_exp = lin_to_exp[venv[0].next()];  // 0..255 -> exp(0..255)
+  //venv[0].update();
+  int32_t vca_exp = venv[0].next();
   // TODO boost if accent_on
   // if (smoothness_on && tbd > 0) { vca_exp = aSmoothGain.next(vca_exp); }  // will this fix click?
-  if (!DEBUG_DISABLE_VENV) { audio_out = (vca_exp * audio_out) >> 8; }
+  if (!DEBUG_DISABLE_VENV) {
+    //vca_exp = (vca_exp * LVL_NORM) >> 8;
+    //if (accent_on) {
+    //  vca_exp += vca_boost; // per accent knob, set in control loop
+    //}
+    audio_out = (vca_exp * audio_out) >> 8;
+  }
   // For reasons, allow 1 bit of headroom to bring us to 10 bits, which is perfect for the SAMD21 DAC
   // a bit of a hack, but let's clip this thing at 10b. see ::55 at https://sensorium.github.io/Mozzi/doc/html/_audio_output_8h_source.html
   // #define CLIP_AUDIO(x) constrain((x), (-(AudioOutputStorage_t) AUDIO_BIAS), (AudioOutputStorage_t) AUDIO_BIAS-1)

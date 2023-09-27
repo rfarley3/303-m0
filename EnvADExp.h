@@ -67,7 +67,7 @@ const int linear_to_exponential[256] = {
          8,   8,   8,   9,   9,   9,   9,   9,  10,  10,  10,  10,  10,  11,  11,  11,  // 112
         11,  12,  12,  12,  12,  13,  13,  13,  14,  14,  14,  14,  15,  15,  15,  16,  // 128
         16,  16,  17,  17,  18,  18,  18,  19,  19,  20,  20,  21,  21,  21,  22,  22,  // 144
-        23,  23,  24,  24,  25,  25,  26,  27,  27,  28,  28,  29,  30,  30,  31,  32,  // 160  // [50] == 26 == 10% point
+        23,  23,  24,  24,  25,  25,  26,  27,  27,  28,  28,  29,  30,  30,  31,  32,  // 160  // [150] == 26 == 10% point
         32,  33,  34,  35,  35,  36,  37,  38,  39,  39,  40,  41,  42,  43,  44,  45,  // 176
         46,  47,  48,  49,  50,  51,  52,  53,  55,  56,  57,  58,  59,  61,  62,  63,  // 192
         65,  66,  68,  69,  71,  72,  74,  76,  77,  79,  81,  82,  84,  86,  88,  90,  // 208
@@ -75,6 +75,28 @@ const int linear_to_exponential[256] = {
        130, 133, 136, 139, 142, 145, 148, 151, 155, 158, 162, 165, 169, 172, 176, 180,  // 240
        184, 188, 192, 196, 201, 205, 210, 214, 219, 224, 229, 234, 239, 244, 250, 255   // 256
 };
+
+const int tenpercent = 191;  // [64] == 26 = 10%,  255-64=191
+// =round(275*pow($F$1,-255+A2),0)-22 is a variant of y=a(b^x)+c, with b at 1.01
+const int linear_to_exponential_soft_101[256] = {
+    0,   0,   0,   0,   1,   1,   1,   1,   2,   2,   2,   2,   3,   3,   3,   3,
+    3,   4,   4,   4,   5,   5,   5,   5,   6,   6,   6,   6,   7,   7,   7,   8,
+    8,   8,   9,   9,   9,   9,  10,  10,  10,  11,  11,  11,  12,  12,  12,  13,
+   13,  13,  14,  14,  14,  15,  15,  16,  16,  16,  17,  17,  18,  18,  18,  19,
+   19,  20,  20,  20,  21,  21,  22,  22,  23,  23,  23,  24,  24,  25,  25,  26,
+   26,  27,  27,  28,  28,  29,  29,  30,  30,  31,  31,  32,  32,  33,  33,  34,   // [64] == 26 = 10%,  255-64=191
+   35,  35,  36,  36,  37,  37,  38,  39,  39,  40,  40,  41,  42,  42,  43,  44,
+   44,  45,  46,  46,  47,  48,  48,  49,  50,  50,  51,  52,  53,  53,  54,  55,
+   56,  56,  57,  58,  59,  60,  60,  61,  62,  63,  64,  65,  66,  66,  67,  68,
+   69,  70,  71,  72,  73,  74,  75,  76,  77,  78,  79,  80,  81,  82,  83,  84,
+   85,  86,  87,  88,  89,  90,  91,  93,  94,  95,  96,  97,  98, 100, 101, 102,
+  103, 105, 106, 107, 108, 110, 111, 112, 114, 115, 116, 118, 119, 121, 122, 123,
+  125, 126, 128, 129, 131, 132, 134, 136, 137, 139, 140, 142, 144, 145, 147, 149,
+  150, 152, 154, 155, 157, 159, 161, 163, 165, 166, 168, 170, 172, 174, 176, 178,
+  180, 182, 184, 186, 188, 190, 192, 195, 197, 199, 201, 203, 206, 208, 210, 213,
+  215, 217, 220, 222, 224, 227, 229, 232, 234, 237, 240, 242, 245, 248, 250, 253  // not 255 to avoid tweaking to perfection while testing
+};
+
 
 
 template <unsigned int CONTROL_UPDATE_RATE, unsigned int LERP_RATE, typename T = unsigned int>
@@ -166,6 +188,9 @@ public:
 		Call this in updateControl().
 		*/
 	void update(){ // control rate
+    if (!adsr_playing) {
+      return;
+    }
 
 		switch(current_phase->phase_type) {
 
@@ -204,7 +229,8 @@ public:
 		unsigned char out = 0;
 		if (!adsr_playing) return out;
 		out = Q15n16_to_Q8n0(transition.next());
-    if (current_phase->phase_type == DECAY) out = linear_to_exponential[out];
+    //out = constrain(out, 10, 180);
+    if (current_phase->phase_type == DECAY) out = linear_to_exponential_soft_101[out];
     //if (scalar8b >= 0) out = (out * scalar8b) >> 8;
 		return out;
 	}
@@ -220,6 +246,8 @@ public:
 	void noteOn(bool reset=false){
 		if (reset) transition.set(0);
 		setPhase(&attack);
+    //transition.set(attack.level);
+    //setPhase(&decay);
 		adsr_playing = true;
 	}
 
@@ -362,6 +390,10 @@ public:
 	inline
 	void setDecayTime(unsigned int msec)
 	{
+    // account that msec is until 10% of level per the 303 manual...
+    // using the exp decay, getting from 255 to 26 (10%) should take msec, but to 0 is much longer. 
+    // tenpercent is set up in the decay curve and is the 255 - index, where curve[index] == 26 (10%)
+    msec = msec * 256 / tenpercent;
 		setTime(&decay, msec);
 	}
 
