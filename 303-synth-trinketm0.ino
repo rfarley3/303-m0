@@ -487,8 +487,8 @@ void updateControl () {
     // Y if !accent_on: fenv(atk=3 msec, dcy=200 msec +(2500-200)*ratio of knob)
     // Y if  accent_on: fenv(atk=3 msec, dcy=200 msec)
     if (!accent_on) {
-      dcy_val = adc_read(DCY_PIN);
-      dcy_ms = map(dcy_val, 0, 255, DCY_MIN, DCY_MAX);
+      dcy_val = lin_to_log(adc_read(DCY_PIN));
+      dcy_ms = map(dcy_val, 0, 255, DCY_FENV_MIN, DCY_FENV_MAX);
     }
     if (dcy_ms != decay) {
       if (DEBUG) { Serial.print("Dcy "); Serial.print(decay); Serial.print(" -> "); Serial.println(dcy_ms); }
