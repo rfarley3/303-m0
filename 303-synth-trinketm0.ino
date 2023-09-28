@@ -354,7 +354,13 @@ bool gate_on (int osc_idx, int velocity) {
     //      then call gate_off and then trigger the env
     return false;
   }
-  if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.println("Triggering VENV & FENV"); }
+  if (velocity >= VEL_TO_ACC_THRESHOLD) {
+    accent_on = true;
+  }
+  else {
+    accent_on = false;
+  }
+  if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.print("Gate on. a? "); Serial.println(accent_on); }
   oscils_playing[osc_idx] = true;
   venv[osc_idx].noteOn();
   fenv[osc_idx].noteOn();
@@ -443,28 +449,31 @@ void updateControl () {
       byte notes[] = { 48, 50, 51, 53, 55, 56, 58, 60 };
       if (tbd_val != tbd) {
         // for testing, this is c harmonic minor
-        HandleNoteOff(MIDI_CHANNEL, notes[tbd], LVL_NORM);
-        // for testing alternate accent
-        accent_on = !accent_on;
+        int velocity = 40;
+        // for testing accent, even ones are accented
+        if (notes[tbd_val] % 2 == 0) {
+          velocity = 127;
+        }
+        HandleNoteOff(MIDI_CHANNEL, notes[tbd], velocity);
+        HandleNoteOn(MIDI_CHANNEL, notes[tbd_val], velocity);
         if (DEBUG) { Serial.print("Tbd "); Serial.print(tbd); Serial.print(" -> "); Serial.print(tbd_val); Serial.print(" a? "); Serial.println(accent_on); } 
         tbd = tbd_val;
-        HandleNoteOn(MIDI_CHANNEL, notes[tbd_val], LVL_NORM);
       }
-      else if (venv[0].playing()) {
-        HandleNoteOff(MIDI_CHANNEL, notes[tbd], LVL_NORM);      
-      }
+//      else if (venv[0].playing()) {
+//        HandleNoteOff(MIDI_CHANNEL, notes[tbd], LVL_NORM);      
+//      }
     }
-    else {
-      tbd_val = adc_read(TBD_PIN);
-      if (tbd_val != tbd) {
-        float smoothness = (float) tbd_val / 255.0;
-        if (smoothness > smoothness_max) {
-          smoothness = smoothness_max;
-        }
-        aSmoothGain.setSmoothness(smoothness);
-        tbd = tbd_val;
-      }
-    }
+//    else {
+//      tbd_val = adc_read(TBD_PIN);
+//      if (tbd_val != tbd) {
+//        float smoothness = (float) tbd_val / 255.0;
+//        if (smoothness > smoothness_max) {
+//          smoothness = smoothness_max;
+//        }
+//        aSmoothGain.setSmoothness(smoothness);
+//        tbd = tbd_val;
+//      }
+//    }
     // freq = fn(note, tuning offset, glide, midi pitch bend)
     // wave = ratio of knob to number of options
     waveform = adc_read(OSC0WAVT_PIN);
@@ -492,20 +501,21 @@ void updateControl () {
   // accent_on affects others
   //   * Y fenv = fenv(dcy=.2)  // dcy looses effect; per schem
   //   * cut = cut - env_mod_bias + fenv*env_mod% + smooth_via_c13(res, fenv*acc%)
-  //   * venv = venv + acc%*(LVL_MAX-LVL_NORM)
-  int acc = adc_read(ACC_PIN);
-  if (acc != accent) {
-    if (DEBUG) { Serial.print("Acc "); Serial.print(accent); Serial.print(" -> "); Serial.println(acc); }
-    accent = acc;
-    if (accent > 127) {
-      smoothness_on = true;
-      if (DEBUG) { Serial.println("Smoothness on"); }
+  //   * Y venv = venv + acc%*(LVL_MAX-LVL_NORM)
+//  if (!accent_on) {
+//    accent_level = LVL_NORM;
+//  }
+  //else {  // accent_on
+    int acc = adc_read(ACC_PIN);
+    if (acc != accent) {
+      if (DEBUG) { Serial.print("Acc "); Serial.print(accent); Serial.print(" -> "); Serial.println(acc); }
+      accent = acc;
+      // TODO mod fenv curve
+      // update_lpf = true;
+      // mod venv amount
     }
-    else {
-      smoothness_on = false;
-    }
-    // update_lpf = true;
-  }
+    accent_level = LVL_NORM + (((LVL_MAX - LVL_NORM) * accent) >> 8);
+ // }
   // res = ratio of knob
   //   if accent_on, res has an effect on fenv
   //     the higher it is, the smoother the curve (more voltage from Accent knob availble to charge C13 in schem)
@@ -631,10 +641,12 @@ AudioOutput_t updateAudio () {
   venv[0].update();
   int32_t vca_exp = venv[0].next();
   if (!DEBUG_DISABLE_VENV) {
-    //vca_exp = (vca_exp * LVL_NORM) >> 8;
-    //if (accent_on) {
-    //  vca_exp += vca_boost; // per accent knob, set in control loop
-    //}
+    int accent_mod = LVL_NORM;
+    if (accent_on) {
+      accent_mod = accent_level;
+    }
+    // adjust the VENV according to output level, which is NORM + !accent?0:accent*(MAX-NORM), set in control
+    vca_exp = (vca_exp * accent_mod) >> 8;
     audio_out = (vca_exp * audio_out) >> 8;
   }
   audio_out = soft_clip(audio_out);
