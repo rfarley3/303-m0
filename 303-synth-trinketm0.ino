@@ -84,24 +84,23 @@
           * Y MIDI is causing lots of power fluctuations and they are also showing in ground
           * Y Shows up as a click on key press, or grown/growl/buzz on CC knob turn/aftertouch/mod/bend
           * Y For certain waves, the VENV attack is louds (namely sine/triangle)---but fix the 10% at t per FENV rate too
-              * really long attack, like 1000 shows that the switch to decay is the pop
+              * N/A really long attack, like 1000 shows that the switch to decay is the pop
               * Y move from exp of e, to 1.1ish (or 1.01) for softer decay. keep adsr always 0..255 and scale in this
       * Y Hidden HPF 
-          * https://www.timstinchcombe.co.uk/index.php?pge=diode2
-          * LPF->HPF
-          * res increases with LPF resonance 
-          * cut is fixed at ~10 Hz
-          * Changes the wave shapes tri looks like sq with hump or tri on top (like the 303 sq) and sq looks like squiggly tri (like 303 tri)
+          * N/A https://www.timstinchcombe.co.uk/index.php?pge=diode2 https://www.patreon.com/posts/patch-ideas-i-tb-41917616
+          * Y LPF->HPF
+          * Y res increases with LPF resonance 
+          * Y cut is fixed at ~10 Hz
+          * TBD OSCILLOSCOPE Changes the wave shapes tri looks like sq with hump or tri on top (like the 303 sq) and sq looks like squiggly tri (like 303 tri)
           * https://olney.ai/ct-modular-book/tb-303.html
-      * decay rate seems too fast for fenv
-  HERE    * May have been fixed by new decay curve for VENV
-          * Notice this method   lpf.setCutoffFreq((amt * env.get() + (1.0 - amt)) * cutoff * 150); (weighted fenv + weighted inverse cut) *150 (must be the max they used for cut)
-          * I think the exp decay is too aggressive 1) try inferring longer time such that 10% remain at t (per manual) 2) use a gentler curve
-      * add vel threshold from noteon as accented
-          * alternate any input as accented or not
-          * add cc to turn it on and off
-      * accent pot on adc
-          * Boost VCA within audioUpdate by LVL_MAX/LVL_NORM=255/208 in some quick non-int way
+      * Y fixing VENV curve fixed click from FENV
+      * Y Restore noteoff/gate off and use 50% gate on keystep...
+      * Y tested adjust env_mod to cut adj, so cut is still playable at max env_mod, but wasn't interesting
+      * Y add vel threshold from noteon as accented
+          * N/A alternate any input as accented or not
+          * N/A add cc to turn it on and off
+      * Y accent pot on adc
+          * Y Boost VCA within audioUpdate by LVL_MAX/LVL_NORM=255/208 in some quick non-int way
           * Make formula to make a duplicate (aka dup-fenv, accented fenv) of fenv (primary, from env_mod)
             * Reduced by accent knob
             * Constant value reduction from a diode
@@ -151,7 +150,7 @@ You can perform this tuning by either applying 3.0VDC to the VCO or finishing th
 #include <ResonantFilter.h>
 #include <mozzi_rand.h> // for rand()
 #include <mozzi_midi.h>
-#include <Smooth.h>
+//#include <Smooth.h>
 #include "EnvADExp.h"  // copy of ~/Arduino/libraries/Mozzi/ADSR.h with exponential decay
 
 /* adc defines */
@@ -197,25 +196,24 @@ LowPassFilter lpf;  // can be changed to HighPassFilter, BandPassFilter or Notch
 ResonantFilter <HIGHPASS> hpf;
 // cut 0-255 to represent 0-8192 Hz
 // res 0-255, with 255 as max res
-
 // StateVariable <LOWPASS> svf; // can be LOWPASS, BANDPASS, HIGHPASS or NOTCH
 // svf freq range is 20 Hz to AUDIO_RATE/4 (32k/4 = 8192)
 #define CUT_MIN 3
 const int CUT_MAX = 255;
-int cutoff = CUT_MAX;
 #define RES_MIN 0
 const int RES_MAX = 240; // 255;
-int resonance = RES_MIN;
 #define FIXED_LOW_CUT 2  // of whatever 10 Hz may be for a res peak in the low end
 
 
-// with accent off, these are the time for exponential decay to 10%
-// accent on it is always 200, with off this is the min
-#define DCY_MIN 200
-// with accent off
-#define DCY_MAX 2500
+// set env_mod min and max (not the knob adc read min/max)
+// this is less than 255, so that cut 
+//#define ENVMOD_MIN 0
+//#define ENVMOD_MAX 127
+
+int resonance = RES_MIN;
+int cutoff = CUT_MAX;
 int accent = 0;
-int env_mod = 127;
+int env_mod = 0;
 int decay = 0;
 int tbd = 0;
 
@@ -234,14 +232,14 @@ bool accent_on = false;
 int accent_level = LVL_NORM;
 int ao_min = 0;
 int ao_max = 0;
-float smoothness_max = 0.9975f;
-bool smoothness_on = false;
-Smooth <long> aSmoothGain(smoothness_max);
+//float smoothness_max = 0.9975f;
+//bool smoothness_on = false;
+//Smooth <long> aSmoothGain(smoothness_max);
 
 
 #define DEBUG 1
 #define DEBUG_TBD_KNOB_NOTES 1  // turning TBD notes creates note events
-#define DEBUG_NOTE_EVENTS 0 // hide note events
+#define DEBUG_NOTE_EVENTS 1 // print out note events
 #define DEBUG_DISABLE_FENV 0  // same as disable LPF & HPF
 #define DEBUG_DISABLE_LPF 0
 #define DEBUG_DISABLE_HPF 0
@@ -279,8 +277,6 @@ void mozzi_setup () {
   oscils_wavt[0] = 0;
   set_wavetables();
   oscils[0].setFreq(oscils_freq[0]);
-  // svf.setResonance(resonance);
-  // svf.setCentreFreq(cutoff);
   lpf.setCutoffFreqAndResonance(cutoff, resonance);
   hpf.setCutoffFreqAndResonance(FIXED_LOW_CUT, resonance);
   // VENV
@@ -356,13 +352,13 @@ bool trigger_env (int osc_idx) {
 }
 
 
-void stop_env (int osc_idx) {
+void gate_off (int osc_idx) {
   /* when no note pressed, switch to rel. with 0 sustain you get here if decay not finished, 303 rel is 0 anyways */
-  if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.println("Triggering VENV Rel (is currently playing but stopped)"); }
+  // if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.println("Triggering VENV Rel (is currently playing but stopped)"); }
   // if (venv[0].playing()) {
   oscils_playing[osc_idx] = false;
   venv[osc_idx].noteOff();
-  fenv[osc_idx].noteOff();
+  fenv[osc_idx].noteOff();  // TODO should something be done here to continue the FENV value as base into next noteOn if still on? (like don't release)
 }
 
 
@@ -412,6 +408,7 @@ int lin_to_log(int lin_val) {
   int log_val = 255 - lin_to_exp[255 - lin_val];
   return log_val;
 }
+
 
 void updateControl () {
   /* Mozzi calls this every CONTROL_RATE, keep as fast as possible as it will hold up AUDIO_RATE calls
@@ -558,6 +555,7 @@ void updateControl () {
   // if update_lpf { and if nothing is playing then don't do the cutoff calcs
   // might as well call this if anything changes, so there isn't the risk of a cut/res jump if a ctrl lags after a noteOn
   // to avoid some distortion it may be worth reducing resonance to ~240 when cutoff < 20
+  // with accent, smooth the cut fenv if (smoothness_ob) {  = aSmoothGain.next(dsaf); }
   lpf.setCutoffFreqAndResonance(tmp_cutoff, resonance);
   hpf.setCutoffFreqAndResonance(FIXED_LOW_CUT, resonance);
   // float venv_accent_boost = acc_pot_to_gain_val[acc];  // ret 1..(LVL_MAX/LVL_NORM)
@@ -667,6 +665,7 @@ AudioOutput_t updateAudio () {
 
 
 int soft_clip(int sample) {
+  /* use tube-ish compression and reserve last 10% for log(x bit of overflow) */
   // AudioOutputStorage_t is an int
   const int max_val = 512;  // M0 DAC is signed 10b, so -512..511
   const int compression_threshold = max_val - 64;  // let's use the 4 LSB to compress the 4 MSB into
