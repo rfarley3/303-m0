@@ -222,14 +222,23 @@ int tbd = 0;
 // ADSR <CONTROL_RATE, AUDIO_RATE> venv;
 // <x, y> where x is how often update() will be called and y is how often next()
 // so for this, put update into controlHool and next in audioHook
-EnvelopeExponentialDecay <CONTROL_RATE, AUDIO_RATE> venv[NUM_OSCILS];
+EnvelopeExponentialDecay <AUDIO_RATE, AUDIO_RATE> venv[NUM_OSCILS];  // needs audio rate updates to declick atk/rel
 EnvelopeExponentialDecay <CONTROL_RATE, CONTROL_RATE> fenv[NUM_OSCILS];
+#define ATK_MSEC 3  // per manual for both VENV and FENV (VEG & MEG)
+#define REL_MSEC 3  // declicker
+// with accent off, these are the time for exponential decay to 10%
+// accent on it is always 200, with off this is the min
+#define DCY_FENV_MIN 200
+// with accent off, decay can be between 200 and 2500 to reach 10%
+#define DCY_FENV_MAX 2500
+#define DCY_VENV 10000
 // for now normal is 62.5%, accent base is 80%
 #define LVL_MIN 0
-#define LVL_NORM 160  // unaccented
-#define LVL_MAX 208
+#define LVL_NORM 127  // unaccented
+#define LVL_MAX 255
 bool accent_on = false;
 int accent_level = LVL_NORM;
+#define VEL_TO_ACC_THRESHOLD 64
 int ao_min = 0;
 int ao_max = 0;
 //float smoothness_max = 0.9975f;
@@ -284,10 +293,10 @@ void mozzi_setup () {
   // FENV has 3 msec attack per manual, too clicky for VENV or the LERP alg
   // turns out it was on exp attack, so fixed that, but still too clicky
   // tried 0 (did not fix it), 3 (orig), 10 (better, but not for sine/tri), 100 (good for sine/triage, but very long)
-  venv[0].setTimes(3, 10000, 0, 0); // 303 VENV is constant, accent changes levels
+  venv[0].setTimes(ATK_MSEC, DCY_VENV, REL_MSEC); // 303 VENV is constant, accent changes levels
   // FENV
   fenv[0].setADLevels(255, 0);  // 303 FENV level changed by env mod, or if accent, then fn of accent, res, and env mod
-  fenv[0].setTimes(3, 2500, 0, 0); // 303 FENV delay changes with knob, levels change as function of env mod or accent, res
+  fenv[0].setTimes(ATK_MSEC, DCY_FENV_MAX, REL_MSEC); // 303 FENV delay changes with knob, levels change as function of env mod or accent, res
   startMozzi(CONTROL_RATE); // :)
 }
 
@@ -332,16 +341,17 @@ void note_change (int osc_idx, int note) {
   oscils[osc_idx].setFreq(oscils_freq[osc_idx]);  // +- bend
   // this would be where the subosc offset could be calc'ed and set
   // note_change(1, note - suboscoffset, false);
+  // this is where keyboard tracking would be modify cutoff freq
 }
 
 
-bool trigger_env (int osc_idx) {
+bool gate_on (int osc_idx, int velocity) {
   /* trigger both envelopes, probably a new note (not a glide) happened */
     // if venv is in ADS, then let it finish
   if (oscils_playing[osc_idx]) {
     // if there was a freq change in the caller, this will mean the orig/existing env will just continue
     // TODO check the status of the venv (always longer than fenv) and if idle/complete
-    //      then call stop_env and then trigger the env
+    //      then call gate_off and then trigger the env
     return false;
   }
   if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.println("Triggering VENV & FENV"); }
@@ -422,7 +432,7 @@ void updateControl () {
   int tbd_val = 0;
   int waveform = 0;
   int dcy_val = 0;
-  int dcy_ms = DCY_MIN;
+  int dcy_ms = DCY_FENV_MIN;
   if (control_cnt > CONTROL_SUBRATE) {
     // these are controls that don't need to be responsive, reduce the I2C waits
     control_cnt = 0;
@@ -465,8 +475,8 @@ void updateControl () {
       oscils_wavt[0] = waveform;
       set_wavetable(0);
     }
-    // if !accent_on: fenv(atk=3 msec, dcy=200 msec +(2500-200)*ratio of knob)
-    // if  accent_on: fenv(atk=3 msec, dcy=200 msec)
+    // Y if !accent_on: fenv(atk=3 msec, dcy=200 msec +(2500-200)*ratio of knob)
+    // Y if  accent_on: fenv(atk=3 msec, dcy=200 msec)
     if (!accent_on) {
       dcy_val = adc_read(DCY_PIN);
       dcy_ms = map(dcy_val, 0, 255, DCY_MIN, DCY_MAX);
@@ -475,12 +485,12 @@ void updateControl () {
       if (DEBUG) { Serial.print("Dcy "); Serial.print(decay); Serial.print(" -> "); Serial.println(dcy_ms); }
       decay = dcy_ms;    
       // see if you don't need to set setADLevel based on accent if you don't need to, use the boost ratio in control
-      fenv[0].setTimes(3, decay, 0, 0);
+      fenv[0].setTimes(ATK_MSEC, decay, REL_MSEC);
     }
   }
   // acc = accent_on ? ratio of knob : 0
   // accent_on affects others
-  //   * fenv = fenv(dcy=.2)  // dcy looses effect; per schem
+  //   * Y fenv = fenv(dcy=.2)  // dcy looses effect; per schem
   //   * cut = cut - env_mod_bias + fenv*env_mod% + smooth_via_c13(res, fenv*acc%)
   //   * venv = venv + acc%*(LVL_MAX-LVL_NORM)
   int acc = adc_read(ACC_PIN);
@@ -518,7 +528,7 @@ void updateControl () {
   //   env_mod directly reduces fenv, and is summed with the accent fenv that comes through res c13
   // int env = ctrl_env_mod();  // nothing to directly set, only reads, ret 0..255
   int env = adc_read(ENVMOD_PIN);
-  // env = map(env, 0, 255, x_MIN, x_MAX);
+  // env = map(env, 0, 255, ENVMOD_MIN, ENVMOD_MAX);
   if (env != env_mod) {
     if (DEBUG) { Serial.print("Env "); Serial.print(env_mod); Serial.print(" -> "); Serial.println(env); }
     env_mod = env;
@@ -558,11 +568,7 @@ void updateControl () {
   // with accent, smooth the cut fenv if (smoothness_ob) {  = aSmoothGain.next(dsaf); }
   lpf.setCutoffFreqAndResonance(tmp_cutoff, resonance);
   hpf.setCutoffFreqAndResonance(FIXED_LOW_CUT, resonance);
-  // float venv_accent_boost = acc_pot_to_gain_val[acc];  // ret 1..(LVL_MAX/LVL_NORM)
-  // venv(atk=3 msec, dcy=5000) * acc%*(LVL_MAX/LVL_NORM)
-  // in audio: venv.next()*venv_accent_boost
-  //           scale_8b_by_perc(venv.next(), venv_accent_boost)
-  venv[0].update();  // does this need to happen every ctrl or can it be skipped if nothing is playing?
+  //venv[0].update();  // does this need to happen every ctrl or can it be skipped if nothing is playing?
 }
 
 
@@ -611,45 +617,19 @@ AudioOutput_t updateAudio () {
   if (!DEBUG_DISABLE_FENV) {
     if (!DEBUG_DISABLE_LPF) {
       audio_out = lpf.next(audio_out);
-      audio_out = soft_clip(audio_out);
+      // audio_out = soft_clip(audio_out);
     }
     if (!DEBUG_DISABLE_HPF) {
       audio_out = hpf.next(audio_out);
-      audio_out = soft_clip(audio_out);
+      // audio_out = soft_clip(audio_out);
     }
   }
-  // TODO Remove, sanity check to make sure we are no longer actually clipping
-  // audio_out = audio_out >> 1; // works with res<=240. try >>0, what is max res before clipping?
-  // env_mod 0, res >240, cut < ? (lower end) gives about +-4500 or 3 bits overflow
-  // TODO use tube-ish compression and reserve last 10% for log(x bit of overflow)
-  if (audio_out < -512) {  // (-(AudioOutputStorage_t) AUDIO_BIAS)
-    if (DEBUG) {
-      Serial.print("Clipping - "); Serial.print(audio_out);
-      if (audio_out < ao_min) {
-        ao_min = audio_out;
-      }
-      Serial.print(" "); Serial.println(ao_min);
-    }
-    audio_out = -512;
-  }
-  else if (audio_out > 511) {  // (AudioOutputStorage_t) AUDIO_BIAS-1
-    if (DEBUG) {
-      Serial.print("Clipping + "); Serial.print(audio_out);
-      if (audio_out> ao_max) {
-        ao_max = audio_out;
-      }
-      Serial.print(" "); Serial.println(ao_max);
-    }
-    audio_out = 511;
-  }
+  // Do we need a soft_clip? or general check that <24b before proceeding?
   // trusting a comment in MultiResonantFilter example::86 to allow 1 bit for resonance
   // filtered_osc should be <=9b
   // now scale for vca, use x*y>>8 which will need 8+9=17b
-  // int32_t vca_exp = lin_to_exp[venv[0].next()];  // 0..255 -> exp(0..255)
-  //venv[0].update();
+  venv[0].update();
   int32_t vca_exp = venv[0].next();
-  // TODO boost if accent_on
-  // if (smoothness_on && tbd > 0) { vca_exp = aSmoothGain.next(vca_exp); }  // will this fix click?
   if (!DEBUG_DISABLE_VENV) {
     //vca_exp = (vca_exp * LVL_NORM) >> 8;
     //if (accent_on) {
@@ -657,6 +637,7 @@ AudioOutput_t updateAudio () {
     //}
     audio_out = (vca_exp * audio_out) >> 8;
   }
+  audio_out = soft_clip(audio_out);
   // For reasons, allow 1 bit of headroom to bring us to 10 bits, which is perfect for the SAMD21 DAC
   // a bit of a hack, but let's clip this thing at 10b. see ::55 at https://sensorium.github.io/Mozzi/doc/html/_audio_output_8h_source.html
   // #define CLIP_AUDIO(x) constrain((x), (-(AudioOutputStorage_t) AUDIO_BIAS), (AudioOutputStorage_t) AUDIO_BIAS-1)
