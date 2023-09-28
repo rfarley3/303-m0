@@ -69,8 +69,8 @@ void HandleNoteOn (byte channel, byte note, byte velocity) {
   // note priority is last, aka most recent, so this could mean a freq change
   // callee will check if there is an actual change
   note_change(0, note);
-  // if venv is in ADS, then let it finish, determined in trigger_env
-  if (trigger_env(0)) {
+  // if venv is in ADS, then let it finish, determined in gate_on
+  if (gate_on(0, velocity)) {
     digitalWrite(MIDI_LED, HIGH);
   }
 }
@@ -78,7 +78,7 @@ void HandleNoteOn (byte channel, byte note, byte velocity) {
 
 void HandleNoteOff (byte channel, byte note, byte velocity) {
   /* MIDI Hook when note off message received (or note on of 0 velocity */
-  if (DEBUG) { Serial.print("MIDI note off "); Serial.print(channel); Serial.print(" "); Serial.print(note); Serial.print(" "); Serial.println(velocity); }
+  if (DEBUG) { Serial.print("MIDI note off "); Serial.print(channel); Serial.print(" "); Serial.println(note); } // Serial.print(" "); Serial.println(velocity); }
   int note_order = note_on[note];
   if (note_order == -1) {
     // this note is already off, ignore
@@ -105,7 +105,7 @@ void HandleNoteOff (byte channel, byte note, byte velocity) {
   if (note_on_order == 1) {
     // there is only one note
     note_on_order = 0;
-    stop_env(0);
+    gate_off(0);
     digitalWrite(MIDI_LED, LOW);
     return; 
   }
@@ -123,7 +123,7 @@ void HandleNoteOff (byte channel, byte note, byte velocity) {
     // 0 is note a valid MIDI note
     if (DEBUG) { Serial.println("No fallback found, ignoring"); }
     note_on_order = 0;
-    stop_env(0);
+    gate_off(0);
     digitalWrite(MIDI_LED, LOW);
     return; 
   }
