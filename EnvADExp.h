@@ -109,7 +109,7 @@ private:
 	T update_step_counter;
 	T num_update_steps;
 
-	enum {ATTACK,DECAY,SUSTAIN,RELEASE,IDLE};
+	enum {ATTACK,DECAY,RELEASE,IDLE};
 
 
 	struct phase{
@@ -117,7 +117,7 @@ private:
 		T update_steps;
 		long lerp_steps; // signed, to match params to transition (line) type Q15n16, below
 		Q8n0 level;
-	}attack,decay,sustain,release,idle;
+	}attack,decay,release,idle;
 
 	phase * current_phase;
 
@@ -174,7 +174,6 @@ public:
 	{
 		attack.phase_type = ATTACK;
 		decay.phase_type = DECAY;
-		sustain.phase_type = SUSTAIN;
 		release.phase_type = RELEASE;
 		idle.phase_type = IDLE;
 		release.level = 0;
@@ -199,17 +198,12 @@ public:
 			break;
 
 		case DECAY:
-      checkForAndSetNextPhase(&idle);
-			//checkForAndSetNextPhase(&sustain);
+      checkForAndSetNextPhase(&release);
 			break;
 
-//		case SUSTAIN:
-//			checkForAndSetNextPhase(&release);
-//			break;
-//
-//		case RELEASE:
-//			checkForAndSetNextPhase(&idle);
-//			break;
+		case RELEASE:
+			checkForAndSetNextPhase(&idle);
+			break;
 
 		case IDLE:
 			adsr_playing = false;
@@ -229,9 +223,7 @@ public:
 		unsigned char out = 0;
 		if (!adsr_playing) return out;
 		out = Q15n16_to_Q8n0(transition.next());
-    //out = constrain(out, 10, 180);
     if (current_phase->phase_type == DECAY) out = linear_to_exponential_soft_101[out];
-    //if (scalar8b >= 0) out = (out * scalar8b) >> 8;
 		return out;
 	}
 
@@ -246,8 +238,6 @@ public:
 	void noteOn(bool reset=false){
 		if (reset) transition.set(0);
 		setPhase(&attack);
-    //transition.set(attack.level);
-    //setPhase(&decay);
 		adsr_playing = true;
 	}
 
@@ -258,7 +248,7 @@ public:
 	*/
 	inline
 	void noteOff(){
-		// setPhase(&release);
+		setPhase(&release);
 	}
 
   inline
@@ -274,11 +264,6 @@ public:
   inline
   bool checkForRelease() {
     return (current_phase->phase_type == RELEASE);
-  }
-
-  inline
-  bool checkForSustain() {
-    return (current_phase->phase_type == SUSTAIN);
   }
 
   inline
@@ -306,16 +291,6 @@ public:
 		decay.level=value;
 	}
 
-
-	/** Set the sustain level of the ADSR.
-	@param value the sustain level.  Usually the same as the decay level,
-	for a steady sustained note.
-	*/
-	inline
-	void setSustainLevel(byte value)
-	{
-		sustain.level=value;
-	}
 
 	/** Set the release level of the ADSR.  Normally you'd make this 0,
 	but you have the option of some other value.
@@ -345,7 +320,6 @@ public:
 	{
 		setAttackLevel(attack);
 		setDecayLevel(decay);
-		setSustainLevel(decay); // stay at decay level
 		setReleaseLevel(1);
 		setIdleLevel(0);
 	}
@@ -358,11 +332,10 @@ public:
 	@param decay the new release level.
 	*/
 	inline
-	void setLevels(byte attack, byte decay, byte sustain, byte release)
+	void setLevels(byte attack, byte decay, byte release)
 	{
 		setAttackLevel(attack);
 		setDecayLevel(decay);
-		setSustainLevel(sustain);
 		setReleaseLevel(release);
 		setIdleLevel(0);
 	}
@@ -398,21 +371,6 @@ public:
 	}
 
 
-	/** Set the sustain time of the ADSR in milliseconds.
-	The actual time taken will be resolved within the resolution of CONTROL_RATE.
-	The sustain phase will finish if the ADSR recieves a noteOff().
-	@param msec the unsigned int sustain time in milliseconds.
-	@note Beware of low values (less than 20 or so, depending on how many steps are being taken),
-	in case internal step size gets calculated as 0, which would mean nothing happens.
-	*/
-	inline
-	void setSustainTime(unsigned int msec)
-	{
-		setTime(&sustain, msec);
-	}
-
-
-
 	/** Set the release time of the ADSR in milliseconds.
 	The actual time taken will be resolved within the resolution of CONTROL_RATE.
 	@param msec the unsigned int release time in milliseconds.
@@ -443,11 +401,10 @@ public:
 	in case internal step size gets calculated as 0, which would mean nothing happens.
 	*/
 	inline
-	void setTimes(unsigned int attack_ms, unsigned int decay_ms, unsigned int sustain_ms, unsigned int release_ms)
+	void setTimes(unsigned int attack_ms, unsigned int decay_ms, unsigned int release_ms)
 	{
 		setAttackTime(attack_ms);
 		setDecayTime(decay_ms);
-		setSustainTime(sustain_ms);
 		setReleaseTime(release_ms);
 		setIdleTime(65535); // guarantee step size of line will be 0
 	}
@@ -474,16 +431,6 @@ public:
 	}
 
 
-	/** Set the sustain time of the ADSR, expressed as the number of update steps (not ADSR::next() interpolation steps) in the sustain phase.
-	@param steps the number of times ADSR::update() will be called in the sustain phase.
-	*/
-	inline
-	void setSustainUpdateSteps(unsigned int steps)
-	{
-		setUpdateSteps(&sustain, steps);
-	}
-
-
 	/** Set the release time of the ADSR, expressed as the number of update steps (not ADSR::next() interpolation steps) in the release phase.
 	@param steps the number of times ADSR::update() will be called in the release phase.
 	 */
@@ -507,11 +454,10 @@ public:
 	@param release_steps the number of update steps in the release phase
 	*/
 	inline
-	void setAllUpdateSteps(unsigned int attack_steps, unsigned int decay_steps, unsigned int sustain_steps, unsigned int release_steps)
+	void setAllUpdateSteps(unsigned int attack_steps, unsigned int decay_steps, unsigned int release_steps)
 	{
 		setAttackUpdateSteps(attack_steps);
 		setDecayUpdateSteps(decay_steps);
-		setSustainUpdateSteps(sustain_steps);
 		setReleaseUpdateSteps(release_steps);
 		setIdleUpdateSteps(65535); // guarantee step size of line will be 0
 	}
