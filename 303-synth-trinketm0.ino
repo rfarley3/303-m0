@@ -693,6 +693,9 @@ int soft_clip(int sample) {
   // finally store the result signed
   tmp_audio_out = compression_threshold + compressed_bits;
   if (sample >= 0) {
+    if (tmp_audio_out == 512) {
+      return 511;
+    }
     return tmp_audio_out;
   }
   return -1 * tmp_audio_out; 
