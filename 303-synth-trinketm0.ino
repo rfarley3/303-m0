@@ -93,6 +93,9 @@
           * Y cut is fixed at ~10 Hz
           * TBD OSCILLOSCOPE Changes the wave shapes tri looks like sq with hump or tri on top (like the 303 sq) and sq looks like squiggly tri (like 303 tri)
           * https://olney.ai/ct-modular-book/tb-303.html
+          * When I scope the square with low pass, I can replicate that url, but not for saw. Consider
+            * make custom wave tables of the high-passed versions, to avoid need for HPF conflicting with resonance in LPF
+            * SKIP for now, disabling HPF until after accent wah circuit done
       * Y fixing VENV curve fixed click from FENV
       * Y Restore noteoff/gate off and use 50% gate on keystep...
       * Y tested adjust env_mod to cut adj, so cut is still playable at max env_mod, but wasn't interesting
@@ -100,8 +103,8 @@
           * N/A alternate any input as accented or not
           * N/A add cc to turn it on and off
       * Y accent pot on adc
-          * Y Boost VCA within audioUpdate by LVL_MAX/LVL_NORM=255/208 in some quick non-int way
-          * Make formula to make a duplicate (aka dup-fenv, accented fenv) of fenv (primary, from env_mod)
+          * Y Boost VCA within audioUpdate by LVL_MAX/LVL_NORM=255/208 in some quick non-int way       
+ HERE     * Make formula to make a duplicate (aka dup-fenv, accented fenv) of fenv (primary, from env_mod)
             * Reduced by accent knob
             * Constant value reduction from a diode
             * Smooth it more as res increases
@@ -110,7 +113,7 @@
       * handle glide/legato if two notes overlap
            * glide_range is 10, https://github.com/treisti/303duino/blob/master/_303/_303.ino#L204
       * Do audio comparison tests against well known 303 sequences with glides, octaves, accent, etc
-      * smooth the adcs with a running average
+      * Check if need to smooth the adcs with a running average
           * (curr = new/16-oldest/16; append(val)), see CircularBuffer.h
           * consider Arduino Zero fast 10b adc read
       * Consider midi reads per diyelectromusic
@@ -129,7 +132,7 @@
       * add cc or knob for attack/snappy (add 808 blip or add noise transient p-b-d-t)
       * Consider swap cut knob for button (mv cut to adc)
           * tap for tempo, press+hold for menu, tap for generative pattern, press+hold for next 
-      * Is a super saw possible?
+      * Is a super saw possible? or general de-tune (wave through 2 delays on LFOs and mixed for chorus/detune effect)
       * ...
 
 per some random internet post:
@@ -161,6 +164,7 @@ You can perform this tuning by either applying 3.0VDC to the VCO or finishing th
 #define ACC_PIN 7
 #define OSC0WAVT_PIN 0
 #define TBD_PIN 1  // for testing emit note on events alternating accent
+#define TBD2_PIN 2 // more testing
 // 2 MOMENTARY_PIN rotates what this can change
 // pin 8 via ADC will be redirected to on-board_adc or pin 4
 #define MOMENTARY_PIN 4  // TODO double clicking this rotates through what a knob can set, hold to set that setting
@@ -201,8 +205,8 @@ ResonantFilter <HIGHPASS> hpf;
 #define CUT_MIN 3
 const int CUT_MAX = 255;
 #define RES_MIN 0
-const int RES_MAX = 240; // 255;
-#define FIXED_LOW_CUT 2  // of whatever 10 Hz may be for a res peak in the low end
+const int RES_MAX = 255; // 240; // 255;
+int FIXED_LOW_CUT = 2;  // of whatever 10 Hz may be for a res peak in the low end
 
 
 // set env_mod min and max (not the knob adc read min/max)
@@ -287,7 +291,9 @@ void mozzi_setup () {
   set_wavetables();
   oscils[0].setFreq(oscils_freq[0]);
   lpf.setCutoffFreqAndResonance(cutoff, resonance);
-  hpf.setCutoffFreqAndResonance(FIXED_LOW_CUT, resonance);
+  if (!DEBUG_DISABLE_HPF) {
+    hpf.setCutoffFreqAndResonance(FIXED_LOW_CUT, resonance);
+  }
   // VENV
   venv[0].setADLevels(255, 0);//accent_level, 0);  // att, dcy; 0-255. 
   // FENV has 3 msec attack per manual, too clicky for VENV or the LERP alg
@@ -442,6 +448,12 @@ void updateControl () {
   if (control_cnt > CONTROL_SUBRATE) {
     // these are controls that don't need to be responsive, reduce the I2C waits
     control_cnt = 0;
+    int tbd2_val = adc_read(TBD2_PIN);
+    // tbd2_val = map(tbd2_val, 0, 255, 0, 255);
+    // tbd2_val = constrain(tbd2_val, 0, 255);
+    if (tbd2_val != FIXED_LOW_CUT) {
+      FIXED_LOW_CUT = tbd2_val;
+    }
     if (DEBUG_TBD_KNOB_NOTES) {
       tbd_val = adc_read(TBD_PIN);
       tbd_val = map(tbd_val, 0, 255, 0, 8);  
@@ -577,7 +589,9 @@ void updateControl () {
   // to avoid some distortion it may be worth reducing resonance to ~240 when cutoff < 20
   // with accent, smooth the cut fenv if (smoothness_ob) {  = aSmoothGain.next(dsaf); }
   lpf.setCutoffFreqAndResonance(tmp_cutoff, resonance);
-  hpf.setCutoffFreqAndResonance(FIXED_LOW_CUT, resonance);
+  if (!DEBUG_DISABLE_HPF) {
+    hpf.setCutoffFreqAndResonance(FIXED_LOW_CUT, resonance);
+  }
   //venv[0].update();  // does this need to happen every ctrl or can it be skipped if nothing is playing?
 }
 
