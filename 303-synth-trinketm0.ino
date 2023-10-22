@@ -241,7 +241,7 @@ EnvelopeExponentialDecay <CONTROL_RATE, CONTROL_RATE> fenv[NUM_OSCILS];
 #define LVL_NORM 127  // unaccented
 #define LVL_MAX 255
 bool accent_on = false;
-int accent_level = LVL_NORM;
+int accent_level = LVL_NORM;  // see audioUpdate for true default value when !accent_on
 #define VEL_TO_ACC_THRESHOLD 64
 int ao_min = 0;
 int ao_max = 0;
@@ -514,10 +514,6 @@ void updateControl () {
   //   * Y fenv = fenv(dcy=.2)  // dcy looses effect; per schem
   //   * cut = cut - env_mod_bias + fenv*env_mod% + smooth_via_c13(res, fenv*acc%)
   //   * Y venv = venv + acc%*(LVL_MAX-LVL_NORM)
-//  if (!accent_on) {
-//    accent_level = LVL_NORM;
-//  }
-  //else {  // accent_on
     int acc = adc_read(ACC_PIN);
     if (acc != accent) {
       if (DEBUG) { Serial.print("Acc "); Serial.print(accent); Serial.print(" -> "); Serial.println(acc); }
@@ -527,7 +523,6 @@ void updateControl () {
       // mod venv amount
     }
     accent_level = LVL_NORM + (((LVL_MAX - LVL_NORM) * accent) >> 8);
- // }
   // res = ratio of knob
   //   if accent_on, res has an effect on fenv
   //     the higher it is, the smoother the curve (more voltage from Accent knob availble to charge C13 in schem)
@@ -548,7 +543,6 @@ void updateControl () {
   //   called the gimmick circuit in manual, increasing env_mod directly reduces cut
   //   this makes the center of the sweep the cut off keeping more in performance range
   //   env_mod directly reduces fenv, and is summed with the accent fenv that comes through res c13
-  // int env = ctrl_env_mod();  // nothing to directly set, only reads, ret 0..255
   int env = adc_read(ENVMOD_PIN);
   // env = map(env, 0, 255, ENVMOD_MIN, ENVMOD_MAX);
   if (env != env_mod) {
