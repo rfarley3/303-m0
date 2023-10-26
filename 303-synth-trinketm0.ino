@@ -5,7 +5,7 @@
  *  
  *  when you load the project in Arduino
  *  * install Mozzi, MIDI
- *  * open adc.ino, dotstar.ino
+ *  * open adc.ino, dotstar.ino, midi_in.ino, EnvADExp.h
 
     Mozzi documentation/API
     https://sensorium.github.io/Mozzi/doc/html/index.html
@@ -20,138 +20,35 @@
     * http://machines.hyperreal.org/manufacturers/Roland/TB-303/schematics/roland.TB-303.schem-5.gif
     * https://www.firstpr.com.au/rwi/dfish/303-unique.html
     * http://machines.hyperreal.org/manufacturers/Roland/TB-303/schematics/roland.TB-303.schem-8.gif
-    * 
+    * https://olney.ai/ct-modular-book/tb-303.html
+ 
     Circuit with Adafruit Trinket M0
     * pin 1 (DAC 10b) audio output 
       * 1k Ohm with (1k Ohm voltage divider (halving 3.3 -> 1.625) & 10 uF coupling capacitor (biasing as AC += .8v))
-      * neg of cap to jack tip
+      * pos of cap to jack tip
     * pin 0 to I2C SDA
     * pin 2 to I2C SCL
     * pin 3 (RX) from MIDI
-    * // pin 4 (ADC 12b) from 10k pot for filter cut freq
     * pin 4 momentary NO switch for input
     * ADC (ADS7830 8 chan 8b) addr x4b
       * Y A0 cut
       * Y A1 res
       * Y A2 env_mod
       * Y A3 decay
-      *   A4 accent
-      *   A5 wave trig
-      *   A6 (temporary for not needing keyboard, hold for cut after putting momentary button on onboard pin 4)
-      *   A7 Button selectable
-      *   TBD candidates:
-          * Some sort of wave shaping to make playability cover more types of music  
-          * Glide {on-rate}
-          * Snappy {attack transient bpdt}{expoential decay rate}
-          * Saturation {distortion, overdrive, wavefolder}
-          * LFO {wave, rate, send-to (>) attenuator, >pitch, >flt-cut, >vca/trem, >flt-res, >pwm}
-          * Sub {wave, rel-note, detune, level, >fm amt}
-          * Noise {wave, level}
-          * Not VENV Attack, Sustain, Release as that'd be too not 303
-          * Kick vol
-          * Snare/hats vol
-
-    Version road map/TODO:
-      * Y verify turns on, use dotstar
-      * Y dac: play tone and test speaker/line out
-      * Y cut pot: respond to cut adjust, no other effects from knob
-      * Y res pot on adc: respond to res adjust
-          * figure out accent driven smoother circuit later (C13/Wow circuit per Devil Fish)
-      * Y osc waveform selector: add pot to adc and test changing waveforms
-      * Y midi input for note on/off (gate and pitch)
-      * Y fix multiple notes held, etc
-      * Y determine default 303 env shape
-          * N/A add env shaping over cc
-      * Y venv to be exp decay, with fixed long gate
-          * N/A add Serial.read to send notes over TTY and not need keyboard for testing
-          * Y Used a spare knob to trigger notes in a scale when turned, will be removed after testing
-          * N/A add drone at max env
-      * Y decay pot on adc: adjust fenv decay time, no other effects from knob
-      * Y fenv
-          * Y adjustable length by decay knob, but if accent_on then fixed
-          * Y exp decay using lin_to_exp
-      * Y env_mod pot on adc:
-          * Y adjust fenv as % headroom of cut
-          * Y adjusts cut lower as env_mod increased (Gimmick circuit per manual)
-              * Y allows filter sweep even with cut is max
-              * Y allows sweep to move through (above/at/below) cut freq instead of only above it
-      * Y fix lpf integer overflow by using consistent 0..255 and then soft_clip function for tube-ish compression
-      * Are all OSC in tune?
-          * Notice this method for setting freq wave_saw.setFreq(freq * (float) SAW8192_SAMPLERATE / (float) SAW8192_NUM_CELLS); 
-      * Add notch to remove any aliasing harmonics due to AUDIO_RATE or CONTROL_RATE
-      * Y Fix VENV clicking by adding star grounding and grouping digital ground
-          * Y ADC adds lots of digital noise to ground, and when volume turned down LM386's input is exposed to it
-          * Y MIDI is causing lots of power fluctuations and they are also showing in ground
-          * Y Shows up as a click on key press, or grown/growl/buzz on CC knob turn/aftertouch/mod/bend
-          * Y For certain waves, the VENV attack is louds (namely sine/triangle)---but fix the 10% at t per FENV rate too
-              * N/A really long attack, like 1000 shows that the switch to decay is the pop
-              * Y move from exp of e, to 1.1ish (or 1.01) for softer decay. keep adsr always 0..255 and scale in this
-      * Y Hidden HPF 
-          * N/A https://www.timstinchcombe.co.uk/index.php?pge=diode2 https://www.patreon.com/posts/patch-ideas-i-tb-41917616
-          * Y LPF->HPF
-          * Y res increases with LPF resonance 
-          * Y cut is fixed at ~10 Hz
-          * TBD OSCILLOSCOPE Changes the wave shapes tri looks like sq with hump or tri on top (like the 303 sq) and sq looks like squiggly tri (like 303 tri)
-          * https://olney.ai/ct-modular-book/tb-303.html
-          * When I scope the square with low pass, I can replicate that url, but not for saw. Consider
-            * make custom wave tables of the high-passed versions, to avoid need for HPF conflicting with resonance in LPF
-            * SKIP for now, disabling HPF until after accent wah circuit done
-      * Y fixing VENV curve fixed click from FENV
-      * Y Restore noteoff/gate off and use 50% gate on keystep...
-      * Y tested adjust env_mod to cut adj, so cut is still playable at max env_mod, but wasn't interesting
-      * Y add vel threshold from noteon as accented
-          * N/A alternate any input as accented or not
-          * N/A add cc to turn it on and off
-      * Y accent pot on adc
-          * Y Boost VCA within audioUpdate by LVL_MAX/LVL_NORM=255/208 in some quick non-int way       
- HERE     * Make formula to make a duplicate (aka dup-fenv, accented fenv) of fenv (primary, from env_mod)
-            * Reduced by accent knob
-            * Constant value reduction from a diode
-            * Smooth it more as res increases
-              * If on a new note, the FENV decay != 0, then add that remainder to next FENV (wavey-steps increasing per remainder, drives cut higher and higher on fast repeat notes)
-            * adapt fenv_boost to be the sum some ratio of accented and the primary
-      * handle glide/legato if two notes overlap
-           * glide_range is 10, https://github.com/treisti/303duino/blob/master/_303/_303.ino#L204
-      * Do audio comparison tests against well known 303 sequences with glides, octaves, accent, etc
-      * Check if need to smooth the adcs with a running average
-          * (curr = new/16-oldest/16; append(val)), see CircularBuffer.h
-          * consider Arduino Zero fast 10b adc read
-      * Consider midi reads per diyelectromusic
-      * Consider small sequencer
-          * struct seq_note {int note, bool accent, octupdown -1,0,1, bool glide}
-          * seq_note seq_notes[16];
-          * easter egg of da funk 303 line
-      * sub-osc: play constant sub-osc square -12
-      * sub-osc waveform selector and level, fm amount
-      * add cc or knob to select lfo waveform, rate
-      * add mod/aft or cc or knob to do lfo send intensity/amount to pitch/OSC, cut, res, trem/VCA
-      * add cc or knob to do saturation: overdrive/distortion (per daft punk), wavefolder
-      * add cc or knob for VENV attack, decay sustain, release
-      * add cc or knob for noise wave, level
-      * add cc or knob for glide rate/speed
-      * add cc or knob for attack/snappy (add 808 blip or add noise transient p-b-d-t)
-      * Consider swap cut knob for button (mv cut to adc)
-          * tap for tempo, press+hold for menu, tap for generative pattern, press+hold for next 
-      * Is a super saw possible? or general de-tune (wave through 2 delays on LFOs and mixed for chorus/detune effect)
-      * ...
-
-per some random internet post:
-There is an 'official' tuning for the VCF.
-According to the Roland TB-303 manual, when playing C1 (65.4Hz) with the cutoff frequency knob set to 50%, saw waveform, and resonance knob at 100%, the resonance frequency should be 500Hz (give or take 100Hz depending on how it sounds to you).
-You can perform this tuning by either applying 3.0VDC to the VCO or finishing the entire assembly and using something like Keyboard mode to trigger the note. "
+      * Y A4 accent
+      * Y A5 wave form
+      *   A6 (temporary for not needing keyboard)
+          *  Eventually something highly playable, like 1) FENV & VENV Attack, 2) Accented Decay % of unaccented decay, 3) Sub-OSC
+      *   A7 ping-4 Button selectable, Candidates in README
 */
 #include <MozziGuts.h>
-#include <Oscil.h> // oscillator template
+#include <Oscil.h>
 // ~/Arduino/libraries/Mozzi/tables 
 # define TABLES_SIZE 2048
-// #include <tables/cos2048_int8.h> // for the modulation oscillators
-#include <tables/sin2048_int8.h> // sine table for oscillator
 #include <tables/saw2048_int8.h> // saw table for oscillator
-#include <tables/triangle2048_int8.h> // triangle table for oscillator
 #include <tables/square_no_alias_2048_int8.h> // square table for oscillator
-// #include <StateVariable.h>
 #include <ResonantFilter.h>
-#include <mozzi_rand.h> // for rand()
+#include <mozzi_rand.h>
 #include <mozzi_midi.h>
 //#include <Smooth.h>
 #include "EnvADExp.h"  // copy of ~/Arduino/libraries/Mozzi/ADSR.h with exponential decay
@@ -163,10 +60,8 @@ You can perform this tuning by either applying 3.0VDC to the VCO or finishing th
 #define DCY_PIN 6
 #define ACC_PIN 7
 #define OSC0WAVT_PIN 0
-#define TBD_PIN 1  // for testing emit note on events alternating accent
-#define TBD2_PIN 2 // more testing
-// 2 MOMENTARY_PIN rotates what this can change
-// pin 8 via ADC will be redirected to on-board_adc or pin 4
+#define TESTING_PIN 1  // for testing, uses tbd and tbd_knob
+#define SELECTABLE 2 // on-board pin 4 momentary button changes which variable and commiting values
 #define MOMENTARY_PIN 4  // TODO double clicking this rotates through what a knob can set, hold to set that setting
 
 /* midi defines */
@@ -181,27 +76,18 @@ int control_cnt = 0;
 
 
 #define NUM_OSCILS 1
-Oscil<TABLES_SIZE, AUDIO_RATE> oscils[NUM_OSCILS]; // is this template right? should it be bit width and am I missing updates anywhere?
+Oscil<TABLES_SIZE, AUDIO_RATE> oscils[NUM_OSCILS];
 int oscils_note[NUM_OSCILS];
 int oscils_freq[NUM_OSCILS];
 bool oscils_playing[NUM_OSCILS];
 int oscils_wavt[NUM_OSCILS];
-int osc0_wavt_cnt = 4;  // count of the switch statement options
+int osc0_wavt_cnt = 2;  // TODO add low-passed sq/saw per https://olney.ai/ct-modular-book/tb-303.html
 
 
-// use: Oscil <table_size, update_rate> oscilName (wavetable), look in .h file of table #included above
-// Oscil <COS2048_NUM_CELLS, CONTROL_RATE> kFilterMod(COS2048_DATA);
-//Oscil <, AUDIO_RATE> WAVEFORM0 = [
-//  Oscil <SIN2048_NUM_CELLS, AUDIO_RATE> aSin(SIN2048_DATA),
-//  Oscil <WHITENOISE8192_NUM_CELLS, AUDIO_RATE> aNoise(WHITENOISE8192_DATA)  // noise always at end
-//];
-
-LowPassFilter lpf;  // can be changed to HighPassFilter, BandPassFilter or NotchFilter
+LowPassFilter lpf;  // same as StateVariable <LOWPASS>
 ResonantFilter <HIGHPASS> hpf;
-// cut 0-255 to represent 0-8192 Hz
+// cut 0-255 to represent freq range is 20 Hz to AUDIO_RATE/4 (32k/4 = 8192) Hz
 // res 0-255, with 255 as max res
-// StateVariable <LOWPASS> svf; // can be LOWPASS, BANDPASS, HIGHPASS or NOTCH
-// svf freq range is 20 Hz to AUDIO_RATE/4 (32k/4 = 8192)
 #define CUT_MIN 3
 const int CUT_MAX = 255;
 #define RES_MIN 0
@@ -209,17 +95,14 @@ const int RES_MAX = 255; // 240; // 255;
 int FIXED_LOW_CUT = 2;  // of whatever 10 Hz may be for a res peak in the low end
 
 
-// set env_mod min and max (not the knob adc read min/max)
-// this is less than 255, so that cut 
-//#define ENVMOD_MIN 0
-//#define ENVMOD_MAX 127
-
 int resonance = RES_MIN;
 int cutoff = CUT_MAX;
 int accent = 0;
 int env_mod = 0;
+// TODO env_mod divider so it's "anti-log"
 int decay = 0;
-int tbd = 0;
+int testing = 0;
+int selectable = 0;
 
 
 // envelope generator
@@ -251,11 +134,12 @@ int ao_max = 0;
 
 
 #define DEBUG 1
-#define DEBUG_TBD_KNOB_NOTES 1  // turning TBD notes creates note events
+#define DEBUG_TBD_KNOB_NOTES 0  // turning TBD creates note events
+#define DEBUG_TBD_KNOB_ENVM 0 // turning TBD modifies the rate env_mod changes cutoff and the fenv sweep range
 #define DEBUG_NOTE_EVENTS 1 // print out note events
 #define DEBUG_DISABLE_FENV 0  // same as disable LPF & HPF
 #define DEBUG_DISABLE_LPF 0
-#define DEBUG_DISABLE_HPF 0
+#define DEBUG_DISABLE_HPF 1
 #define DEBUG_DISABLE_VENV 0
 void debug_setup () {
   /* if debug off, we don't need serial */
@@ -323,12 +207,13 @@ void set_wavetable (int oscil_idx) {
     case 1:
       oscils[oscil_idx].setTable(SQUARE_NO_ALIAS_2048_DATA);
       break;
-    case 2:
-      oscils[oscil_idx].setTable(TRIANGLE2048_DATA);
-      break;
-    case 3:
-      oscils[oscil_idx].setTable(SIN2048_DATA);
-      break;
+    // TODO add HPF versions of sq and saw
+    // case 2:
+    //   oscils[oscil_idx].setTable(TRIANGLE2048_DATA);
+    //   break;
+    // case 3:
+    //   oscils[oscil_idx].setTable(SIN2048_DATA);
+    //   break;
     default: // case 0
       oscils[oscil_idx].setTable(SAW2048_DATA);
   }
@@ -439,7 +324,6 @@ void updateControl () {
    *    next extrapolates between actual and next
    *  aka this is where you read knobs and set/update any numbers extrapolated/used within audioHook
    */
-  // bool update_lpf = false;
   control_cnt++;
   int tbd_val = 0;
   int waveform = 0;
@@ -448,44 +332,36 @@ void updateControl () {
   if (control_cnt > CONTROL_SUBRATE) {
     // these are controls that don't need to be responsive, reduce the I2C waits
     control_cnt = 0;
-    int tbd2_val = adc_read(TBD2_PIN);
-    // tbd2_val = map(tbd2_val, 0, 255, 0, 255);
-    // tbd2_val = constrain(tbd2_val, 0, 255);
-    if (tbd2_val != FIXED_LOW_CUT) {
-      FIXED_LOW_CUT = tbd2_val;
-    }
+    int testing_val = adc_read(TESTING_PIN);
+    // testing_val = map(testing_val, 0, 255, 0, 255);
+    // testing_val = constrain(testing_val, 0, 255);
+    // if (testing_val != testing) {
+    //   testing = testing_val;
+    // }
     if (DEBUG_TBD_KNOB_NOTES) {
-      tbd_val = adc_read(TBD_PIN);
-      tbd_val = map(tbd_val, 0, 255, 0, 8);  
-      tbd_val = constrain(tbd_val, 0, 7); 
+      //tbd_val = adc_read(TBD_PIN);
+      testing_val = map(testing_val, 0, 255, 0, 8);  
+      testing_val = constrain(testing_val, 0, 7); 
       byte notes[] = { 48, 50, 51, 53, 55, 56, 58, 60 };
-      if (tbd_val != tbd) {
+      if (testing_val != testing) {
         // for testing, this is c harmonic minor
         int velocity = 40;
         // for testing accent, even ones are accented
-        if (notes[tbd_val] % 2 == 0) {
+        if (notes[testing_val] % 2 == 0) {
           velocity = 127;
         }
-        HandleNoteOff(MIDI_CHANNEL, notes[tbd], velocity);
-        HandleNoteOn(MIDI_CHANNEL, notes[tbd_val], velocity);
-        if (DEBUG) { Serial.print("Tbd "); Serial.print(tbd); Serial.print(" -> "); Serial.print(tbd_val); Serial.print(" a? "); Serial.println(accent_on); } 
-        tbd = tbd_val;
+        HandleNoteOff(MIDI_CHANNEL, notes[testing], velocity);
+        HandleNoteOn(MIDI_CHANNEL, notes[testing_val], velocity);
+        if (DEBUG) { Serial.print("Tbd "); Serial.print(testing_val); Serial.print(" -> "); Serial.print(testing_val); Serial.print(" a? "); Serial.println(accent_on); } 
+        testing = testing_val;
       }
-//      else if (venv[0].playing()) {
-//        HandleNoteOff(MIDI_CHANNEL, notes[tbd], LVL_NORM);      
-//      }
     }
-//    else {
-//      tbd_val = adc_read(TBD_PIN);
-//      if (tbd_val != tbd) {
-//        float smoothness = (float) tbd_val / 255.0;
-//        if (smoothness > smoothness_max) {
-//          smoothness = smoothness_max;
-//        }
-//        aSmoothGain.setSmoothness(smoothness);
-//        tbd = tbd_val;
-//      }
-//    }
+    else if (DEBUG_TBD_KNOB_ENVM) {
+      if (testing_val != testing) {
+        // TODO change the dividing factor for envm to cut
+        testing = testing_val;
+      }
+    }
     // freq = fn(note, tuning offset, glide, midi pitch bend)
     // wave = ratio of knob to number of options
     waveform = adc_read(OSC0WAVT_PIN);
@@ -508,21 +384,22 @@ void updateControl () {
       // see if you don't need to set setADLevel based on accent if you don't need to, use the boost ratio in control
       fenv[0].setTimes(ATK_MSEC, decay, REL_MSEC);
     }
-  }
+  }  // end if (control_cnt > CONTROL_SUBRATE)
+  
+  // The following are checked every CONTROL_RATE
   // acc = accent_on ? ratio of knob : 0
   // accent_on affects others
   //   * Y fenv = fenv(dcy=.2)  // dcy looses effect; per schem
   //   * cut = cut - env_mod_bias + fenv*env_mod% + smooth_via_c13(res, fenv*acc%)
   //   * Y venv = venv + acc%*(LVL_MAX-LVL_NORM)
-    int acc = adc_read(ACC_PIN);
-    if (acc != accent) {
-      if (DEBUG) { Serial.print("Acc "); Serial.print(accent); Serial.print(" -> "); Serial.println(acc); }
-      accent = acc;
-      // TODO mod fenv curve
-      // update_lpf = true;
-      // mod venv amount
-    }
-    accent_level = LVL_NORM + (((LVL_MAX - LVL_NORM) * accent) >> 8);
+  int acc = adc_read(ACC_PIN);
+  if (acc != accent) {
+    if (DEBUG) { Serial.print("Acc "); Serial.print(accent); Serial.print(" -> "); Serial.println(acc); }
+    accent = acc;
+    // TODO mod fenv curve
+    // mod venv amount
+  }
+  accent_level = LVL_NORM + (((LVL_MAX - LVL_NORM) * accent) >> 8);
   // res = ratio of knob
   //   if accent_on, res has an effect on fenv
   //     the higher it is, the smoother the curve (more voltage from Accent knob availble to charge C13 in schem)
@@ -536,7 +413,6 @@ void updateControl () {
   if (res != resonance) {
     if (DEBUG) { Serial.print("Res "); Serial.print(resonance); Serial.print(" -> "); Serial.println(res); }
     resonance = res;
-    // update_lpf = true;
   }
   // env_mod = ratio of knob
   //   env_mod has an effect on fenv and cut
@@ -548,7 +424,6 @@ void updateControl () {
   if (env != env_mod) {
     if (DEBUG) { Serial.print("Env "); Serial.print(env_mod); Serial.print(" -> "); Serial.println(env); }
     env_mod = env;
-    // update_lpf = true;
   }
   // if !accent_on: cut = cut + fn(fenv(dcy=knob)*env_mod%)
   
@@ -556,9 +431,9 @@ void updateControl () {
   //                res 0% is fenv/acc. res 100% smooth(fenv*acc%)
   //                see https://www.firstpr.com.au/rwi/dfish/303-unique.html
   //  HERE     * Make formula to make a duplicate (aka dup-fenv, accented fenv) of fenv (primary, from env_mod)
-//            * Reduced by accent knob
-//            * Constant value reduction from a diode
-//            * Smooth it more as res increases
+  //            * Reduced by accent knob
+  //            * Constant value reduction from a diode
+  //            * Smooth it more as res increases
   //   if accent_on, res has an effect on fenv
   //     the higher it is, the smoother the curve (more voltage from Accent knob availble to charge C13 in schem)
   //     the lower it is, the accented decay cv is summed with the decay cv that went through the env mod
@@ -573,13 +448,21 @@ void updateControl () {
   if (cut_value != cutoff) {
     if (DEBUG) { Serial.print("Cut "); Serial.print(cutoff); Serial.print(" -> "); Serial.println(cut_value); }
     cutoff = cut_value;
-    // update_lpf = true;
   }
-  // if anything is playing...
   // now we adjust the cut
+  fenv[0].update();  // consider moving to audio_rate if alg is fast enough
+  int fenv_level = fenv[0].next();
+  int tmp_cutoff = calc_cutoff(fenv_level);
+  lpf.setCutoffFreqAndResonance(tmp_cutoff, resonance);
+  if (!DEBUG_DISABLE_HPF) {
+    hpf.setCutoffFreqAndResonance(FIXED_LOW_CUT, resonance);
+  }
+}
+
+int calc_cutoff(int fenv_level) {
+  // Uses globals cutoff, env_mod (eventually accent_on, accent, resonance)
   // for now, just give it the spike to know it works
-  fenv[0].update();  // does this need to happen every ctrl or can it be skipped if nothing is playing?
-  int fenv_level = (fenv[0].next() * env_mod) >> 8;  // use env_mod as a % on fenv and preserve 8b
+  fenv_level = (fenv_level * env_mod) >> 8;  // use env_mod as a % on fenv and preserve 8b
   // fenv_level = lin_to_exp[fenv_level];  // scale to be exponential decay
   // make a temp cut reduced by env_mod
   int tmp_cutoff = cutoff - (((cutoff - CUT_MIN) * env_mod) >> 8);
@@ -593,11 +476,7 @@ void updateControl () {
   // might as well call this if anything changes, so there isn't the risk of a cut/res jump if a ctrl lags after a noteOn
   // to avoid some distortion it may be worth reducing resonance to ~240 when cutoff < 20
   // with accent, smooth the cut fenv if (smoothness_ob) {  = aSmoothGain.next(dsaf); }
-  lpf.setCutoffFreqAndResonance(tmp_cutoff, resonance);
-  if (!DEBUG_DISABLE_HPF) {
-    hpf.setCutoffFreqAndResonance(FIXED_LOW_CUT, resonance);
-  }
-  //venv[0].update();  // does this need to happen every ctrl or can it be skipped if nothing is playing?
+  return tmp_cutoff;
 }
 
 
@@ -646,11 +525,9 @@ AudioOutput_t updateAudio () {
   if (!DEBUG_DISABLE_FENV) {
     if (!DEBUG_DISABLE_LPF) {
       audio_out = lpf.next(audio_out);
-      // audio_out = soft_clip(audio_out);
     }
     if (!DEBUG_DISABLE_HPF) {
       audio_out = hpf.next(audio_out);
-      // audio_out = soft_clip(audio_out);
     }
   }
   // Do we need a soft_clip? or general check that <24b before proceeding?
