@@ -551,9 +551,20 @@ void updateControl () {
     // update_lpf = true;
   }
   // if !accent_on: cut = cut + fn(fenv(dcy=knob)*env_mod%)
+  
   // if  accent_on: cut = cut + smooth_via_c13(res, fenv*acc%)
   //                res 0% is fenv/acc. res 100% smooth(fenv*acc%)
   //                see https://www.firstpr.com.au/rwi/dfish/303-unique.html
+  //  HERE     * Make formula to make a duplicate (aka dup-fenv, accented fenv) of fenv (primary, from env_mod)
+//            * Reduced by accent knob
+//            * Constant value reduction from a diode
+//            * Smooth it more as res increases
+  //   if accent_on, res has an effect on fenv
+  //     the higher it is, the smoother the curve (more voltage from Accent knob availble to charge C13 in schem)
+  //     the lower it is, the accented decay cv is summed with the decay cv that went through the env mod
+  //   this makes the center of the sweep the cut off keeping more in performance range
+  //   env_mod directly reduces fenv, and is summed with the accent fenv that comes through res c13
+
   // int cut_value = lin_to_exp[adc_read(CUT_PIN)];  // convert to exp (less change per step at lower values; more at higher; for more intuitive knob turning)
   int cut_value = adc_read(CUT_PIN);
   cut_value = map(cut_value, 0, 255, CUT_MIN, CUT_MAX);
