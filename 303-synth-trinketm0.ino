@@ -372,6 +372,9 @@ void updateControl () {
       dcy_val = lin_to_log(adc_read(DCY_PIN));
       dcy_ms = map(dcy_val, 0, 255, DCY_FENV_MIN, DCY_FENV_MAX);
     }
+    else {
+      dcy_ms = DCY_FENV_MIN;
+    }
     if (dcy_ms != decay) {
       if (DEBUG) { Serial.print("Dcy "); Serial.print(decay); Serial.print(" -> "); Serial.println(dcy_ms); }
       decay = dcy_ms;    
@@ -429,7 +432,7 @@ void updateControl () {
   // if  accent_on: cut = cut + smooth_via_c13(res, fenv*acc%)
   //                res 0% is fenv/acc. res 100% smooth(fenv*acc%)
   //                see https://www.firstpr.com.au/rwi/dfish/303-unique.html
-  //  HERE     * Make formula to make a duplicate (aka dup-fenv, accented fenv) of fenv (primary, from env_mod)
+  //            * Make formula to make a duplicate (aka dup-fenv, accented fenv) of fenv (primary, from env_mod)
   //            * Reduced by accent knob
   //            * Constant value reduction from a diode
   //            * Smooth it more as res increases
