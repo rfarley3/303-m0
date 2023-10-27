@@ -50,7 +50,7 @@
 #include <ResonantFilter.h>
 #include <mozzi_rand.h>
 #include <mozzi_midi.h>
-//#include <Smooth.h>
+#include <Smooth.h>
 #include "EnvADExp.h"  // copy of ~/Arduino/libraries/Mozzi/ADSR.h with exponential decay
 
 /* adc defines */
@@ -128,9 +128,9 @@ int accent_level = LVL_NORM;  // see audioUpdate for true default value when !ac
 #define VEL_TO_ACC_THRESHOLD 64
 int ao_min = 0;
 int ao_max = 0;
-//float smoothness_max = 0.9975f;
+float smoothness_max = 0.9975f;
 //bool smoothness_on = false;
-//Smooth <long> aSmoothGain(smoothness_max);
+Smooth <long> aSmoothGain(smoothness_max);
 
 
 #define DEBUG 1
@@ -208,12 +208,6 @@ void set_wavetable (int oscil_idx) {
       oscils[oscil_idx].setTable(SQUARE_NO_ALIAS_2048_DATA);
       break;
     // TODO add HPF versions of sq and saw
-    // case 2:
-    //   oscils[oscil_idx].setTable(TRIANGLE2048_DATA);
-    //   break;
-    // case 3:
-    //   oscils[oscil_idx].setTable(SIN2048_DATA);
-    //   break;
     default: // case 0
       oscils[oscil_idx].setTable(SAW2048_DATA);
   }
@@ -413,6 +407,11 @@ void updateControl () {
   if (res != resonance) {
     if (DEBUG) { Serial.print("Res "); Serial.print(resonance); Serial.print(" -> "); Serial.println(res); }
     resonance = res;
+    float smoothness_a = float(resonance)/256.0;
+    if (smoothness_a > smoothness_max) {
+      smoothness_a = smoothness_max;
+    }
+    aSmoothGain.setSmoothness(smoothness_a);
   }
   // env_mod = ratio of knob
   //   env_mod has an effect on fenv and cut
@@ -460,22 +459,46 @@ void updateControl () {
 }
 
 int calc_cutoff(int fenv_level) {
+  int antilog_reduction = 2;  // /4 to /8 comes from the manual visual referenc; make adjustable using TESTING knob, 1-6
   // Uses globals cutoff, env_mod (eventually accent_on, accent, resonance)
-  // for now, just give it the spike to know it works
-  fenv_level = (fenv_level * env_mod) >> 8;  // use env_mod as a % on fenv and preserve 8b
-  // fenv_level = lin_to_exp[fenv_level];  // scale to be exponential decay
-  // make a temp cut reduced by env_mod
-  int tmp_cutoff = cutoff - (((cutoff - CUT_MIN) * env_mod) >> 8);
-  // int tmp_cutoff = CUT_MIN + (((cutoff - CUT_MIN) * (255 - env_mod)) >> 8);  // reduce cutoff as % of inverse of env_mod
-  // find the headroom above the temp cut, then use fenv as a % against that
-  int fenv_boost = ((CUT_MAX - tmp_cutoff) * fenv_level) >> 8;  // and preserve 8b
-  tmp_cutoff = tmp_cutoff + fenv_boost;  // should be max of 255
+  int tmp_env_mod = env_mod >> antilog_reduction; 
+  int tmp_fenv_range = 2 * tmp_env_mod;
+  int tmp_cutoff = cutoff - tmp_env_mod;
+  // TODO replace these comments with ones in pynb
+  // TODO the way that env_mod reduces cutoff is "anti-log" but the knob is log, so it may not be a simple 1:1
+  // for now, just use the linear change reduced by divisor
+
+  // fenv_level is 0..255 along time domain for decay msec
+  // NOTE currenctly fenv_level is a exponential decay
+  // But cut bias (q9/q10) are anti-log resp and linear decay could hand wave these without complicated math
+  
+  // use it as a percent fenv_level/256 to scale tmp_fenv_range and add to tmp_cutoff
+  // let this go below 0 and above 255, and hard clip before we exit this function
+  int fenv_boost = ((fenv_level * tmp_fenv_range) >> 8);
+  tmp_cutoff = tmp_cutoff + fenv_boost;  // unaccented cutoff from fenv plus the gimmick down-justed cutoff
+
+  // ?? where should this comment go: to avoid some distortion it may be worth reducing resonance to ~240 when cutoff < 20
+  // make sure you hear effect when env_mod = 0
+  if (accent_on) {
+    // tmp_cutoff is the unaccented cutoff
+    // create an accent to add to unaccented
+    // this is FENV * accent% - diode
+    int tmp_accent = (fenv_level * accent) >> 8;
+    // assume 6v bus and 0.6v fwd voltage drop through diode, so out of diode is 90%
+    // subtract 10% of 255
+    tmp_accent = tmp_accent - 26;
+    if (tmp_accent < 0) {
+      tmp_accent = 0;
+    }
+    tmp_accent = tmp_accent >> antilog_reduction; // to emulate antilog response
+    // smooth this using resonance% as the smooth factor
+    tmp_accent = aSmoothGain.next(tmp_accent);
+    // sum the voltages
+    tmp_cutoff = tmp_cutoff + tmp_accent;
+  }
+  
   // avoid aliasing due to integer overflow, this is like hard clipping, could benefit from compression-like alg, or assurances against int overflow
   tmp_cutoff = constrain(tmp_cutoff, CUT_MIN, CUT_MAX);
-  // if update_lpf { and if nothing is playing then don't do the cutoff calcs
-  // might as well call this if anything changes, so there isn't the risk of a cut/res jump if a ctrl lags after a noteOn
-  // to avoid some distortion it may be worth reducing resonance to ~240 when cutoff < 20
-  // with accent, smooth the cut fenv if (smoothness_ob) {  = aSmoothGain.next(dsaf); }
   return tmp_cutoff;
 }
 
