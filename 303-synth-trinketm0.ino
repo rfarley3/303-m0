@@ -68,6 +68,9 @@
 // #define MIDI_CHANNEL MIDI_CHANNEL_OMNI  // means all channels
 #define MIDI_CHANNEL 1
 
+#define POLYPHONIC 0  // default to monosynth (only 1 note at a time, like a 303)
+// Eventually add back in polyphonic and remove gate/glide reactions, and a way to switch between 303 and Minitaur modes
+
 
 // use #define for CONTROL_RATE, not a constant
 #define CONTROL_RATE 64  // Hz, powers of 2 are most reliable, lower numbers are "better" bc less load on the system
@@ -232,7 +235,7 @@ void note_change (int osc_idx, int note) {
 
 bool gate_on (int osc_idx, int velocity) {
   /* trigger both envelopes, probably a new note (not a glide) happened */
-    // if venv is in ADS, then let it finish
+  // if venv is in ADS, then let it finish
   if (oscils_playing[osc_idx]) {
     // if there was a freq change in the caller, this will mean the orig/existing env will just continue
     // TODO check the status of the venv (always longer than fenv) and if idle/complete
