@@ -15,6 +15,9 @@ MIDI_CREATE_DEFAULT_INSTANCE();
 int note_on[MIDI_NOTE_CNT];
 int note_on_order = 0;
 
+bool clock_on = false;
+unsigned int clock_counter = 0;
+
 #define ENABLE_MIDI 1  // test speed up, use only the pot
 
 
@@ -22,8 +25,11 @@ void midi_setup () {
   pinMode(MIDI_LED, OUTPUT);
 
   // Connect the HandleNoteOn function to the library, so it is called upon reception of a NoteOn.
-  MIDI.setHandleNoteOn(HandleNoteOn);  // Put only the name of the function
-  MIDI.setHandleNoteOff(HandleNoteOff);  // Put only the name of the function
+  MIDI.setHandleNoteOn(HandleNoteOn);
+  MIDI.setHandleNoteOff(HandleNoteOff);
+  MIDI.setHandleClock(HandleClock);
+  MIDI.setHandleStart(HandleStart);
+  MIDI.setHandleStop(HandleStop);
   if (ENABLE_MIDI) { MIDI.begin(MIDI_CHANNEL); }
   init_note_on();
 }
@@ -53,7 +59,7 @@ void HandleNoteOn (byte channel, byte note, byte velocity) {
   /* MIDI Hook when note on message received */
   // there would be where channel mapping to instrument (bass vs kd vs hats) would route noteOns
   // assume only bass (303) for now
-  if (DEBUG) { Serial.print("MIDI note on "); Serial.print(channel); Serial.print(" "); Serial.print(note); Serial.print(" "); Serial.println(velocity); }
+  if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.print("MIDI note on "); Serial.print(channel); Serial.print(" "); Serial.print(note); Serial.print(" "); Serial.println(velocity); }
   if (velocity == 0) {
     HandleNoteOff(channel, note, velocity);
     return;
@@ -78,7 +84,7 @@ void HandleNoteOn (byte channel, byte note, byte velocity) {
 
 void HandleNoteOff (byte channel, byte note, byte velocity) {
   /* MIDI Hook when note off message received (or note on of 0 velocity */
-  if (DEBUG) { Serial.print("MIDI note off "); Serial.print(channel); Serial.print(" "); Serial.println(note); } // Serial.print(" "); Serial.println(velocity); }
+  if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.print("MIDI note off "); Serial.print(channel); Serial.print(" "); Serial.println(note); } // Serial.print(" "); Serial.println(velocity); }
   int note_order = note_on[note];
   if (note_order == -1) {
     // this note is already off, ignore
@@ -92,7 +98,7 @@ void HandleNoteOff (byte channel, byte note, byte velocity) {
   note_on[note] = -1;
   // if this note is not the priority note, just remove it from the fallbacks
   if (note_order < note_on_order) {
-    if (DEBUG) { Serial.println("Not priority note, removed from fallbacks"); }
+    if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.println("Not priority note, no need to remember, removed from fallbacks"); }
     // earlier note_on[note] of -1 removes it from fallbacks
     return;
   }
@@ -121,7 +127,7 @@ void HandleNoteOff (byte channel, byte note, byte velocity) {
   }
   if (fallback == -1) {
     // 0 is note a valid MIDI note
-    if (DEBUG) { Serial.println("No fallback found, ignoring"); }
+    if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.println("No fallback found, no action needed, signal gate_off, then ignoring"); }
     note_on_order = 0;
     gate_off(0);
     digitalWrite(MIDI_LED, LOW);
@@ -133,8 +139,40 @@ void HandleNoteOff (byte channel, byte note, byte velocity) {
   }
   // another note needs to played instead
   // just switch freqs and then let existing env keep playing
-  if (DEBUG) { Serial.print("Found fallback note "); Serial.println(fallback); }
+  if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.print("Found fallback note "); Serial.println(fallback); }
   note_change(0, fallback);
 }
+
+
+void HandleClock () {
+  if (!clock_on) {
+    return;
+  }
+  // this stays fairly dumb, there are 24 PPQN as midi 1 byte msgs
+  // 303 uses 16th notes and 4/4 time, which means 6 ticks per note
+  // 50% gate means 3 ticks
+  if (clock_counter == 0 || clock_counter == 2) {
+    glide_tick(clock_counter);
+  }
+  clock_counter += 1;
+  // only sample once per quarter note
+  if (clock_counter == 24) {
+    clock_counter = 0;
+  }
+}
+
+
+void HandleStart() {
+  clock_on = true;
+  clock_counter = 0;
+  HandleClock();
+}
+
+
+void HandleStop() {
+  clock_on = false;
+  clock_counter = 0;
+}
+
 
 #endif
