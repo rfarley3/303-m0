@@ -218,12 +218,12 @@ public:
 	@return the next value, as an unsigned char.
 	 */
 	inline
-	unsigned char next()//int scalar8b=-1)
+	unsigned char next(bool linear=false)
 	{
 		unsigned char out = 0;
 		if (!adsr_playing) return out;
 		out = Q15n16_to_Q8n0(transition.next());
-    if (current_phase->phase_type == DECAY) out = linear_to_exponential_soft_101[out];
+    if (!linear && current_phase->phase_type == DECAY) out = linear_to_exponential_soft_101[out];
 		return out;
 	}
 
