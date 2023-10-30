@@ -87,6 +87,15 @@ int oscils_wavt[NUM_OSCILS];
 int osc0_wavt_cnt = 2;  // TODO add low-passed sq/saw per https://olney.ai/ct-modular-book/tb-303.html
 
 
+unsigned int audio_loop_cnt = 0;
+unsigned int glide_period_calc_tmp = 0;
+unsigned int glide_period_as_audio_loops = 5000;
+bool glide_on = 0;
+bool glide_pos = true;  // going up vs false for going down
+unsigned int glide_start_freq = 0;
+unsigned int glide_start_loop_cnt = 0;
+
+
 LowPassFilter lpf;  // same as StateVariable <LOWPASS>
 ResonantFilter <HIGHPASS> hpf;
 // cut 0-255 to represent freq range is 20 Hz to AUDIO_RATE/4 (32k/4 = 8192) Hz
@@ -136,14 +145,22 @@ float smoothness_max = 0.9975f;
 Smooth <long> aSmoothGain(smoothness_max);
 
 
-#define DEBUG 1
+// the following are around debug print statements
+#define DEBUG 1                 // print debug stmts, set to 0 to turn off all the following
 #define DEBUG_TBD_KNOB_NOTES 0  // turning TBD creates note events
-#define DEBUG_TBD_KNOB_ENVM 0 // turning TBD modifies the rate env_mod changes cutoff and the fenv sweep range
-#define DEBUG_NOTE_EVENTS 1 // print out note events
-#define DEBUG_DISABLE_FENV 0  // same as disable LPF & HPF
-#define DEBUG_DISABLE_LPF 0
-#define DEBUG_DISABLE_HPF 1
-#define DEBUG_DISABLE_VENV 0
+#define DEBUG_TBD_KNOB_ENVM 0   // turning TBD modifies the rate env_mod changes cutoff and the fenv sweep range
+#define DEBUG_NOTE_EVENTS 0     // print out note on/off, freqs, priority choices, some within midi_in.ino
+#define DEBUG_GLIDE_EVENTS 0    // print out gliding events
+#define DEBUG_FENV_EVENTS 1     // print out accent and filter envelop messages
+
+// the following happen within audio loop, so turn them on and off to test performance
+#define DEBUG_DISABLE_FENV 1       // same as disable LPF & HPF
+#define DEBUG_DISABLE_LPF 0        // turn off low pass filter
+#define DEBUG_DISABLE_HPF 1        // turn off hidden static-cut high pass filter
+#define DEBUG_DISABLE_VENV 1       // turn off vca/audio volume envelop (will drone and ignore note offs)
+#define DEBUG_DISABLE_SOFT_CLIP 0  // alg to avoid hard clipping/distortion due to overflow of -512+511 (10b int)
+
+
 void debug_setup () {
   /* if debug off, we don't need serial */
   if (!DEBUG) {
@@ -217,18 +234,62 @@ void set_wavetable (int oscil_idx) {
 }
 
 
+void glide_tick(int tick) {
+  // tick = 0..2 for 3 ticks, but only called when tick == 0 or 2
+  if (tick == 0) {
+    // 0 means a note started
+    glide_period_calc_tmp = audio_loop_cnt;
+    if (DEBUG && DEBUG_GLIDE_EVENTS) { Serial.print("glide_tempo_cnt_started "); Serial.println(glide_period_calc_tmp); }
+  }
+  if (glide_period_calc_tmp == 0) {
+    // don't set things if _tmp never set (aka no tick of 0 ever seen yet)
+    return;
+  }
+  if (audio_loop_cnt <= glide_period_calc_tmp) {
+    // see if loop_cnt has overflowed, and if it did, just ignore this tempo hint
+    return;
+  }
+  if (tick == 2) {
+    // 2 means 3 ticks, means 50% gate on a 16th note
+    glide_period_as_audio_loops = audio_loop_cnt - glide_period_calc_tmp;
+    if (DEBUG && DEBUG_GLIDE_EVENTS) { Serial.print("glide_period_as_audio_loops "); Serial.println(glide_period_as_audio_loops); }
+    glide_period_calc_tmp = 0;
+  }
+}
+
+
 void note_change (int osc_idx, int note) {
   /* the note changed, update globals, convert to freq, and set the osc */
   if (note == oscils_note[osc_idx]) {
     return;
   }
+  int curr_freq = oscils_freq[osc_idx];
   int freq = (int)mtof(note);
-  if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.print("Freq "); Serial.print(oscils_freq[osc_idx]); Serial.print(" -> "); Serial.println(freq); }
-  oscils_freq[osc_idx] = freq;
+  if (DEBUG && DEBUG_NOTE_EVENTS) { Serial.print("Freq "); Serial.print(curr_freq); Serial.print(" -> "); Serial.println(freq); }
+  oscils_freq[osc_idx] = freq;  // target
   oscils_note[osc_idx] = note;
-  oscils[osc_idx].setFreq(oscils_freq[osc_idx]);  // +- bend
-  // this would be where the subosc offset could be calc'ed and set
-  // note_change(1, note - suboscoffset, false);
+  if (!oscils_playing[osc_idx] || glide_period_as_audio_loops == 0) {
+    // if no other note playing, then set freq
+    oscils[osc_idx].setFreq(freq);  // +- bend
+    // this would be where the subosc offset could be calc'ed and set
+    // note_change(1, note - suboscoffset, false);
+  } else { // if /* oscil playing && */ (glide_period_as_audio_loops > 0) {
+    // if this is a glide (another note exists), and we know a tempo then
+    glide_on = true;
+    int glide_distance = freq - curr_freq;
+    if (glide_distance > 0) {
+      glide_pos = true;
+    }
+    else {
+      glide_pos = false;
+      glide_distance = glide_distance * -1;
+    }
+    glide_start_freq = curr_freq;
+    glide_start_loop_cnt = audio_loop_cnt;
+    if (DEBUG && DEBUG_GLIDE_EVENTS) { Serial.print("Gliding +-"); Serial.print(glide_distance); Serial.print(" -> "); Serial.println(freq); }
+    // how to handle sub osc here?
+    // how would bends be handled during glide?
+  }
   // this is where keyboard tracking would be modify cutoff freq
 }
 
@@ -379,7 +440,8 @@ void updateControl () {
       dcy_ms = DCY_FENV_MIN;
     }
     if (dcy_ms != decay) {
-      if (DEBUG) { Serial.print("Dcy "); Serial.print(decay); Serial.print(" -> "); Serial.println(dcy_ms); }
+      // don't bother debug print when accent goes on and off
+      if (DEBUG && !accent_on && decay != 200) { Serial.print("Dcy "); Serial.print(decay); Serial.print(" -> "); Serial.println(dcy_ms); }
       decay = dcy_ms;    
       // see if you don't need to set setADLevel based on accent if you don't need to, use the boost ratio in control
       fenv[0].setTimes(ATK_MSEC, decay, REL_MSEC);
@@ -469,6 +531,7 @@ int calc_cutoff(int fenv_level) {
   // Uses globals cutoff, env_mod (eventually accent_on, accent, resonance)
   int tmp_env_mod = env_mod >> antilog_reduction; 
   int tmp_fenv_range = 2 * tmp_env_mod;
+  // lower cutoff, such that original cutoff is now in the middle of the fenv sweep
   int tmp_cutoff = cutoff - tmp_env_mod;
   // TODO replace these comments with ones in pynb
   // TODO the way that env_mod reduces cutoff is "anti-log" but the knob is log, so it may not be a simple 1:1
@@ -550,7 +613,44 @@ AudioOutput_t updateAudio () {
    */
   // int8_t osc.next -128-127
   // int9   lpf.next -256-255  // TODO verify
+  if (glide_on) {
+    // if (freq_perc < 0 || freq_perc > 1) {
+    if (audio_loop_cnt < glide_start_loop_cnt
+        || (audio_loop_cnt - glide_start_loop_cnt) > glide_period_as_audio_loops) {
+      // if audio_loop_cnt overflows error to turning off
+      // if perc greater than 1, set to 1
+      glide_on = false;
+      oscils[0].setFreq(oscils_freq[0]);
+      // if (DEBUG && DEBUG_GLIDE_EVENTS) { Serial.println("AUD Gliding off, target reached "); }
+    }
+    else {  
+      // glide freq change = glide freq range * percentage of glide time
+      // can trust that audio_loop_cnt and glide_start_loop_cnt are valid
+      //   * audio_loop_cnt >= glide_start_loop && that their diff < glide_period_as_audio_loops
+      float freq_perc = float(audio_loop_cnt - glide_start_loop_cnt) / float(glide_period_as_audio_loops);  // 0..1 start..end      
+      // Consider speed up with less floats and ints only, at glide_on, set steps per Hz:
+      // hz_change = (audio_loop_cnt - glide_start_loop_cnt)/loop_cnt_per_hz
+      
+      // These are in separate if/else statement bc when combined there was hiss in the opposite direction
+      // recheck math on int(freq_range * freq_perc) and why it fails when freq_range is negative
+      if (glide_pos) {
+        // going up
+        float freq_range = oscils_freq[0] - glide_start_freq;
+        int freq = glide_start_freq + int(freq_range * freq_perc);
+        oscils[0].setFreq(freq);
+      }
+      else {
+        // going down
+        float freq_range = glide_start_freq - oscils_freq[0];
+        int freq = glide_start_freq - int(freq_range * freq_perc);
+        oscils[0].setFreq(freq);
+      } 
+      // if (DEBUG && DEBUG_GLIDE_EVENTS) { Serial.print("AUD Gliding Freq "); Serial.print(freq); Serial.print(" -> "); Serial.println(oscils_freq[0]); }
+    }
+    // this is where subosc and bends would be accounted for, possibly keytracking cutoff
+  }
   int32_t audio_out = oscils[0].next();  // AudioOutputStorage_t is an int
+  // TODO if res is too high, prescale down audio_out
   if (!DEBUG_DISABLE_FENV) {
     if (!DEBUG_DISABLE_LPF) {
       audio_out = lpf.next(audio_out);
@@ -574,10 +674,13 @@ AudioOutput_t updateAudio () {
     vca_exp = (vca_exp * accent_mod) >> 8;
     audio_out = (vca_exp * audio_out) >> 8;
   }
-  audio_out = soft_clip(audio_out);
+  if (!DEBUG_DISABLE_SOFT_CLIP) {
+    audio_out = soft_clip(audio_out);
+  }
   // For reasons, allow 1 bit of headroom to bring us to 10 bits, which is perfect for the SAMD21 DAC
   // a bit of a hack, but let's clip this thing at 10b. see ::55 at https://sensorium.github.io/Mozzi/doc/html/_audio_output_8h_source.html
   // #define CLIP_AUDIO(x) constrain((x), (-(AudioOutputStorage_t) AUDIO_BIAS), (AudioOutputStorage_t) AUDIO_BIAS-1)
+  audio_loop_cnt++;  // unsigned int, just let it overflow to start again
   return MonoOutput::fromNBit(10, audio_out);
 }
 
