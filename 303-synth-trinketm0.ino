@@ -122,7 +122,7 @@ int selectable = 0;
 // <x, y> where x is how often update() will be called and y is how often next()
 // so for this, put update into controlHool and next in audioHook
 EnvelopeExponentialDecay <AUDIO_RATE, AUDIO_RATE> venv[NUM_OSCILS];  // needs audio rate updates to declick atk/rel
-EnvelopeExponentialDecay <CONTROL_RATE, CONTROL_RATE> fenv[NUM_OSCILS];
+EnvelopeExponentialDecay <AUDIO_RATE, AUDIO_RATE> fenv[NUM_OSCILS];
 #define ATK_MSEC 3  // per manual for both VENV and FENV (VEG & MEG)
 #define REL_MSEC 3  // declicker
 // with accent off, these are the time for exponential decay to 10%
@@ -154,10 +154,10 @@ Smooth <long> aSmoothGain(smoothness_max);
 #define DEBUG_FENV_EVENTS 1     // print out accent and filter envelop messages
 
 // the following happen within audio loop, so turn them on and off to test performance
-#define DEBUG_DISABLE_FENV 1       // same as disable LPF & HPF
+#define DEBUG_DISABLE_FENV 0       // same as disable LPF & HPF
 #define DEBUG_DISABLE_LPF 0        // turn off low pass filter
 #define DEBUG_DISABLE_HPF 1        // turn off hidden static-cut high pass filter
-#define DEBUG_DISABLE_VENV 1       // turn off vca/audio volume envelop (will drone and ignore note offs)
+#define DEBUG_DISABLE_VENV 0       // turn off vca/audio volume envelop (will drone and ignore note offs)
 #define DEBUG_DISABLE_SOFT_CLIP 0  // alg to avoid hard clipping/distortion due to overflow of -512+511 (10b int)
 
 
@@ -516,14 +516,7 @@ void updateControl () {
     if (DEBUG) { Serial.print("Cut "); Serial.print(cutoff); Serial.print(" -> "); Serial.println(cut_value); }
     cutoff = cut_value;
   }
-  // now we adjust the cut
-  fenv[0].update();  // consider moving to audio_rate if alg is fast enough
-  int fenv_level = fenv[0].next();
-  int tmp_cutoff = calc_cutoff(fenv_level);
-  lpf.setCutoffFreqAndResonance(tmp_cutoff, resonance);
-  if (!DEBUG_DISABLE_HPF) {
-    hpf.setCutoffFreqAndResonance(FIXED_LOW_CUT, resonance);
-  }
+
 }
 
 int calc_cutoff(int fenv_level) {
@@ -561,6 +554,7 @@ int calc_cutoff(int fenv_level) {
     }
     tmp_accent = tmp_accent >> antilog_reduction; // to emulate antilog response
     // smooth this using resonance% as the smooth factor
+    // aSmoothGain.setSmoothness done in resonance knob reader/handler
     tmp_accent = aSmoothGain.next(tmp_accent);
     // sum the voltages
     tmp_cutoff = tmp_cutoff + tmp_accent;
@@ -650,8 +644,18 @@ AudioOutput_t updateAudio () {
     // this is where subosc and bends would be accounted for, possibly keytracking cutoff
   }
   int32_t audio_out = oscils[0].next();  // AudioOutputStorage_t is an int
+  
   // TODO if res is too high, prescale down audio_out
   if (!DEBUG_DISABLE_FENV) {
+  // now we adjust the cut
+  fenv[0].update();  // consider moving to audio_rate if alg is fast enough
+  bool fenv_is_linear = true;  // vs default of exponential decay
+  int fenv_level = fenv[0].next(fenv_is_linear);
+  int tmp_cutoff = calc_cutoff(fenv_level);
+  lpf.setCutoffFreqAndResonance(tmp_cutoff, resonance);
+  if (!DEBUG_DISABLE_HPF) {
+    hpf.setCutoffFreqAndResonance(FIXED_LOW_CUT, resonance);
+  }
     if (!DEBUG_DISABLE_LPF) {
       audio_out = lpf.next(audio_out);
     }
@@ -659,6 +663,7 @@ AudioOutput_t updateAudio () {
       audio_out = hpf.next(audio_out);
     }
   }
+  
   // Do we need a soft_clip? or general check that <24b before proceeding?
   // trusting a comment in MultiResonantFilter example::86 to allow 1 bit for resonance
   // filtered_osc should be <=9b
